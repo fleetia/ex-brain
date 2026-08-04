@@ -36,9 +36,11 @@ AI와 일하다 보면 이런 패턴이 반복됩니다.
 | 스킬 | `session-start` | 이전 기록을 읽고 컨텍스트 복원 |
 | 스킬 | `kb-lookup` | 새 작업 착수 전에 과거 기록을 먼저 검색 |
 | 스킬 | `kb-routing` | 문서를 어느 폴더에 둘지, 인덱스를 어떻게 관리할지 규칙 |
+| 스킬 | `weekly-summary` / `monthly-summary` | 주간·월간 요약 생성 — **자동으로 돌지 않고, 요청할 때만** |
 | 훅 | `session-context.sh` | 세션이 열릴 때마다 진행 중 작업·최근 문서·vault 상태를 자동 주입 |
+| 훅 | `check-pii.sh` | vault에 저장되는 문서에서 이메일·전화번호·토큰 등 민감정보를 감지하면 차단 |
 | 스크립트 | `kb_lint.py` | vault 위생 검사 — 깨진 링크, 인덱스 누락, 폴더-상태 불일치 |
-| 템플릿 | `vault-template/` | 지식 폴더 초기 구조 |
+| 템플릿 | `vault-template/` | 지식 폴더 초기 구조 (기록 예시 1개 포함) |
 
 **글쓰기 스킬** — 기록과 별개로, 글을 쓰는 모든 작업에서 Claude가 알아서 참고합니다.
 
@@ -74,6 +76,7 @@ vault 위생은 자동으로 관리됩니다. 세션을 종료할 때마다 lint
 - **세션 종료**: "세션 종료해줘" → 오늘 한 일, 남은 일, 시도했다가 접은 것까지 vault에 기록됩니다
 - **세션 시작**: 자동입니다. 진행 중 작업 목록이 알아서 로드되고, "이어서 하자"라고 하면 지난 기록을 읽고 이어갑니다
 - **새 작업**: 역시 자동입니다. Claude가 착수 전에 과거 기록을 먼저 검색해서, 예전에 내린 결정이나 했던 리서치를 반영합니다
+- **주간·월간 요약**: 필요할 때 "주간 요약 만들어줘" / "월간 요약 만들어줘"라고 요청하면 태스크 기록을 모아 `00.memory/weekly/`, `00.memory/monthly/`에 만들어줍니다. 자동으로 돌지 않으니, 주간 회고나 월간 공유 전에 습관적으로 요청하면 좋습니다
 
 ## vault 구조
 
@@ -100,11 +103,17 @@ setup.sh가 기존 설정을 백업한 뒤 훅만 추가합니다. 이미 다른
 **Q. 훅이 안 도는 것 같아요.**
 터미널에서 `bash ~/KnowledgeBase/_kit/hooks/session-context.sh`를 직접 실행해보세요. 출력이 나오면 훅 자체는 정상이고, 설정 등록 문제입니다. 훅 변경은 새 세션부터 적용된다는 점도 확인하세요.
 
+**Q. 백업은 어떻게 하나요?**
+vault는 평범한 markdown 폴더라서 지금은 노트북이 고장 나면 같이 사라집니다. 둘 중 하나를 권합니다: ① vault에서 `git init` 후 주기적으로 커밋하고 회사 GitHub의 private repo에 올리기 — Claude에게 "vault 백업 설정해줘"라고 시키면 됩니다. ② Dropbox처럼 경로에 공백이 없는 동기화 폴더 안에 vault를 만들기 (`bash setup.sh $HOME/Dropbox/vault`). iCloud Drive는 경로에 공백이 있어 설치 스크립트가 지원하지 않습니다.
+
 **Q. 지우고 싶어요.**
-`~/.claude/skills/`에서 이 킷의 symlink 7개(session-start, session-end, kb-lookup, kb-routing, humanize-ko, cognitive-rhythm-writing, task-doc-writing)를 지우고, `~/.claude/settings.json`에서 SessionStart 항목을 제거하면 됩니다. vault는 그냥 markdown 폴더라 원하는 만큼 보관하면 됩니다.
+`bash uninstall.sh`를 실행하면 스킬 연결과 훅 등록이 제거됩니다. vault는 그대로 남으니, 더 이상 필요 없으면 폴더째 지우면 됩니다.
 
 **Q. lint가 뭘 하나요? 꼭 필요한가요?**
 문서가 쌓이면 링크가 깨지거나 인덱스에서 빠진 문서가 생기는데, 그걸 AI가 검색할 때 놓치지 않도록 세션 종료 시마다 자동 점검합니다. python3가 필요하지만(macOS 기본 포함), 없어도 기록·복원 기능은 전부 정상 동작합니다.
 
 **Q. 규칙을 바꾸고 싶어요.**
-`vault/_kit/skills/` 안의 SKILL.md가 원본입니다. 예를 들어 기록 양식에 섹션을 추가하고 싶으면 `session-end/SKILL.md`를 고치면 됩니다. Claude에게 "session-end 스킬에 ○○ 섹션 추가해줘"라고 시켜도 됩니다.
+`vault/_kit/skills/` 안의 SKILL.md가 원본입니다. 예를 들어 기록 양식에 섹션을 추가하고 싶으면 `session-end/SKILL.md`를 고치면 됩니다. Claude에게 "session-end 스킬에 ○○ 섹션 추가해줘"라고 시켜도 됩니다. 단, 나중에 setup.sh를 다시 실행하면(킷 업데이트를 받을 때) 수정한 파일은 `.bak-{시각}`으로 백업된 뒤 킷 버전으로 교체되니, 백업과 비교해서 수정 내용을 다시 반영하세요.
+
+**Q. 민감정보 차단이 뜨는데요?**
+vault에 저장하려는 문서에 이메일·전화번호·API 토큰 같은 게 들어 있다는 뜻입니다. 고객이나 동료의 실명·연락처는 역할명("담당 디자이너", "고객 A")으로 바꿔 저장하는 습관을 권합니다. 예시값이라 괜찮다면 `example.com`, `010-0000-0000` 같은 명백한 placeholder 형태로 바꾸면 통과됩니다.

@@ -17,7 +17,7 @@ KIT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VAULT="${1:-$HOME/KnowledgeBase}"
 CLAUDE_DIR="$HOME/.claude"
 SETTINGS="$CLAUDE_DIR/settings.json"
-SKILLS=(session-start session-end kb-lookup kb-routing humanize-ko cognitive-rhythm-writing task-doc-writing)
+SKILLS=(session-start session-end kb-lookup kb-routing humanize-ko cognitive-rhythm-writing task-doc-writing weekly-summary monthly-summary)
 ts="$(date +%Y%m%d%H%M%S)"
 
 case "$VAULT" in
@@ -43,21 +43,43 @@ else
 fi
 
 # 2) 스킬·훅·스크립트를 vault/_kit/ 로 복사 (킷 폴더를 나중에 지워도 동작하도록)
-mkdir -p "$VAULT/_kit/hooks" "$VAULT/_kit/scripts"
-cp "$KIT/hooks/session-context.sh" "$VAULT/_kit/hooks/session-context.sh"
-chmod +x "$VAULT/_kit/hooks/session-context.sh"
-cp "$KIT/scripts/kb_lint.py" "$VAULT/_kit/scripts/kb_lint.py"
+#    로컬에서 수정한 파일이 있으면 .bak-{시각} 으로 백업한 뒤 킷 버전으로 교체한다.
+backup_count=0
+install_file() {
+  local src="$1" dst="$2"
+  mkdir -p "$(dirname "$dst")"
+  if [ -f "$dst" ] && ! cmp -s "$src" "$dst"; then
+    cp "$dst" "$dst.bak-$ts"
+    backup_count=$((backup_count + 1))
+  fi
+  cp "$src" "$dst"
+}
+
+install_file "$KIT/hooks/session-context.sh" "$VAULT/_kit/hooks/session-context.sh"
+install_file "$KIT/hooks/check-pii.sh" "$VAULT/_kit/hooks/check-pii.sh"
+chmod +x "$VAULT/_kit/hooks/"*.sh
+install_file "$KIT/scripts/kb_lint.py" "$VAULT/_kit/scripts/kb_lint.py"
+
+# 스킬은 staging에서 vault 경로 치환까지 마친 뒤 설치 (재실행 시 불필요한 백업 방지)
+stage="$(mktemp -d)"
 for name in "${SKILLS[@]}"; do
-  mkdir -p "$VAULT/_kit/skills/$name"
-  cp -R "$KIT/skills/$name/." "$VAULT/_kit/skills/$name/"
+  mkdir -p "$stage/$name"
+  cp -R "$KIT/skills/$name/." "$stage/$name/"
+  if [ "$VAULT" != "$HOME/KnowledgeBase" ]; then
+    "${SED_I[@]}" "s|~/KnowledgeBase|$VAULT|g" "$stage/$name/SKILL.md"
+  fi
+  while IFS= read -r rel; do
+    rel="${rel#./}"
+    install_file "$stage/$name/$rel" "$VAULT/_kit/skills/$name/$rel"
+  done < <(cd "$stage/$name" && find . -type f)
 done
-# 기본 경로가 아니면 스킬 문서 속 vault 경로 표기를 실제 경로로 치환
-if [ "$VAULT" != "$HOME/KnowledgeBase" ]; then
-  for name in "${SKILLS[@]}"; do
-    "${SED_I[@]}" "s|~/KnowledgeBase|$VAULT|g" "$VAULT/_kit/skills/$name/SKILL.md"
-  done
+rm -rf "$stage"
+
+echo "✓ 스킬 ${#SKILLS[@]}개 + 훅 2개 + lint 스크립트 → $VAULT/_kit/"
+if [ "$backup_count" -gt 0 ]; then
+  echo "· 로컬에서 수정했던 파일 ${backup_count}개를 .bak-$ts 로 백업한 뒤 킷 버전으로 교체했습니다"
+  echo "  (수정 내용을 유지하려면 백업 파일과 비교해 다시 반영하세요)"
 fi
-echo "✓ 스킬 ${#SKILLS[@]}개 + 훅 + lint 스크립트 → $VAULT/_kit/"
 
 # 3) ~/.claude/skills/ symlink
 mkdir -p "$CLAUDE_DIR/skills"
@@ -71,21 +93,21 @@ for name in "${SKILLS[@]}"; do
 done
 echo "✓ ~/.claude/skills/ symlink 연결"
 
-# 4) settings.json 에 SessionStart 훅 등록
+# 4) settings.json 에 훅 등록 (SessionStart: 컨텍스트 주입, PostToolUse: 민감정보 스캔)
 HOOK_CMD="$VAULT/_kit/hooks/session-context.sh"
+PII_CMD="$VAULT/_kit/hooks/check-pii.sh"
 
 manual_notice() {
   echo ""
   echo "  수동 등록 방법:"
-  echo "  1) $KIT/settings-snippet.json 을 열어 __HOOK_PATH__ 를 아래 경로로 바꾼다"
-  echo "       $HOOK_CMD"
+  echo "  1) $KIT/settings-snippet.json 을 열어 placeholder 를 아래 경로로 바꾼다"
+  echo "       __HOOK_PATH__     → $HOOK_CMD"
+  echo "       __PII_HOOK_PATH__ → $PII_CMD"
   echo "  2) 그 내용을 $SETTINGS 의 hooks 항목에 합친다"
   echo "  (Claude Code에게 두 파일을 보여주고 \"합쳐줘\"라고 해도 된다)"
 }
 
-if [ -f "$SETTINGS" ] && grep -q "session-context.sh" "$SETTINGS" 2>/dev/null; then
-  echo "· SessionStart 훅이 이미 등록되어 있습니다"
-elif [ ! -f "$SETTINGS" ]; then
+if [ ! -f "$SETTINGS" ]; then
   mkdir -p "$CLAUDE_DIR"
   cat > "$SETTINGS" <<EOF
 {
@@ -102,23 +124,60 @@ elif [ ! -f "$SETTINGS" ]; then
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$PII_CMD",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
 EOF
-  echo "✓ settings.json 생성 + SessionStart 훅 등록"
+  echo "✓ settings.json 생성 + 훅 2개 등록"
 elif command -v jq >/dev/null 2>&1; then
-  if jq -e '.hooks.SessionStart' "$SETTINGS" >/dev/null 2>&1; then
+  settings_backed_up=0
+  backup_settings() {
+    if [ "$settings_backed_up" -eq 0 ]; then
+      cp "$SETTINGS" "$SETTINGS.bak-$ts"
+      settings_backed_up=1
+    fi
+  }
+  # SessionStart: 다른 훅이 이미 있으면 건드리지 않음 (보수적)
+  if grep -q "session-context.sh" "$SETTINGS" 2>/dev/null; then
+    echo "· SessionStart 훅이 이미 등록되어 있습니다"
+  elif jq -e '.hooks.SessionStart' "$SETTINGS" >/dev/null 2>&1; then
     echo "! settings.json 에 다른 SessionStart 훅이 이미 있습니다 — 자동 병합하지 않습니다."
     manual_notice
   else
-    cp "$SETTINGS" "$SETTINGS.bak-$ts"
+    backup_settings
     tmp="$(mktemp)"
     jq --arg cmd "$HOOK_CMD" \
       '.hooks = (.hooks // {}) + {SessionStart: [{matcher: "startup|clear", hooks: [{type: "command", command: $cmd, timeout: 10, statusMessage: "지식베이스 컨텍스트 로딩..."}]}]}' \
       "$SETTINGS" > "$tmp"
     mv "$tmp" "$SETTINGS"
-    echo "✓ SessionStart 훅 등록 (기존 설정은 settings.json.bak-$ts 로 백업)"
+    echo "✓ SessionStart 훅 등록"
+  fi
+  # PostToolUse: 배열이라 기존 항목 뒤에 append 가능
+  if grep -q "check-pii.sh" "$SETTINGS" 2>/dev/null; then
+    echo "· 민감정보 스캔 훅이 이미 등록되어 있습니다"
+  else
+    backup_settings
+    tmp="$(mktemp)"
+    jq --arg cmd "$PII_CMD" \
+      '.hooks = (.hooks // {}) | .hooks.PostToolUse = ((.hooks.PostToolUse // []) + [{matcher: "Write|Edit", hooks: [{type: "command", command: $cmd, timeout: 10}]}])' \
+      "$SETTINGS" > "$tmp"
+    mv "$tmp" "$SETTINGS"
+    echo "✓ 민감정보 스캔 훅 등록"
+  fi
+  if [ "$settings_backed_up" -eq 1 ]; then
+    echo "· 기존 설정은 settings.json.bak-$ts 로 백업되어 있습니다"
   fi
 else
   echo "! jq 가 없어 기존 settings.json 에 자동 병합할 수 없습니다."

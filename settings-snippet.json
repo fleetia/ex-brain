@@ -12,6 +12,18 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__PII_HOOK_PATH__",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
