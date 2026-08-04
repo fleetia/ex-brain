@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOOK_PATH__",
+            "timeout": 10,
+            "statusMessage": "지식베이스 컨텍스트 로딩..."
+          }
+        ]
+      }
+    ]
+  }
+}
