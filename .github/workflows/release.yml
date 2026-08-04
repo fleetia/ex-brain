@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # 쌓인 changeset이 있으면 "버전 릴리스 준비" PR을 생성/갱신하고 여기서 끝.
+      # 그 PR을 머지하면 changeset이 비워진 상태로 이 워크플로우가 다시 돌아 아래 릴리스 단계가 실행된다.
+      - name: Changesets
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          version: npx changeset version
+          commit: 'chore: 버전 릴리스 준비'
+          title: 'chore: 버전 릴리스 준비'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & Release
+        if: steps.changesets.outputs.hasChangesets == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          TAG="v$VERSION"
+
+          if [ "$VERSION" = "0.0.0" ]; then
+            echo "아직 버전이 발행되지 않았습니다 — 스킵"
+            exit 0
+          fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release $TAG 이미 존재 — 스킵"
+            exit 0
+          fi
+
+          bash build.sh dist
+          (cd dist && zip -rq "ai-session-kit-cli-$TAG.zip" cli && zip -rq "ai-session-kit-app-$TAG.zip" app)
+
+          # CHANGELOG.md에서 이번 버전 섹션만 추출해 릴리스 노트로 사용
+          awk -v ver="$VERSION" '$0 == "## " ver {flag=1; next} /^## / && flag {exit} flag {print}' CHANGELOG.md > dist/notes.md
+          [ -s dist/notes.md ] || echo "릴리스 $TAG" > dist/notes.md
+
+          gh release create "$TAG" \
+            "dist/ai-session-kit-cli-$TAG.zip" \
+            "dist/ai-session-kit-app-$TAG.zip" \
+            --title "$TAG" \
+            --notes-file dist/notes.md

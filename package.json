@@ -1,0 +1,12 @@
+{
+  "name": "ai-session-kit",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "changeset": "changeset",
+    "build": "bash build.sh"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.29.0"
+  }
+}
