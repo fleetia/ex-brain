@@ -81,7 +81,7 @@ if [ "$backup_count" -gt 0 ]; then
   echo "  (수정 내용을 유지하려면 백업 파일과 비교해 다시 반영하세요)"
 fi
 
-# 3) ~/.claude/skills/ symlink
+# 3) 스킬 연결 — Claude(~/.claude/skills)와 Codex(~/.agents/skills) 양쪽
 mkdir -p "$CLAUDE_DIR/skills"
 for name in "${SKILLS[@]}"; do
   target="$CLAUDE_DIR/skills/$name"
@@ -91,7 +91,22 @@ for name in "${SKILLS[@]}"; do
   fi
   ln -sfn "$VAULT/_kit/skills/$name" "$target"
 done
-echo "✓ ~/.claude/skills/ symlink 연결"
+echo "✓ Claude 스킬 연결 (~/.claude/skills/)"
+
+AGENT_SKILLS="$HOME/.agents/skills"
+mkdir -p "$AGENT_SKILLS"
+codex_linked=0
+codex_skipped=0
+for name in "${SKILLS[@]}"; do
+  target="$AGENT_SKILLS/$name"
+  if [ -e "$target" ] && [ ! -L "$target" ]; then
+    codex_skipped=$((codex_skipped + 1))
+    continue
+  fi
+  ln -sfn "$VAULT/_kit/skills/$name" "$target"
+  codex_linked=$((codex_linked + 1))
+done
+echo "✓ Codex 스킬 연결 (~/.agents/skills/, ${codex_linked}개 연결·${codex_skipped}개 기존 보존)"
 
 # 4) settings.json 에 훅 등록 (SessionStart: 컨텍스트 주입, PostToolUse: 민감정보 스캔)
 HOOK_CMD="$VAULT/_kit/hooks/session-context.sh"
@@ -215,8 +230,9 @@ fi
 cat <<'DONE'
 
 설치 완료. 다음 단계:
-- 새 Claude Code 세션을 열면 진행 중 작업 목록이 자동으로 로드됩니다 (처음엔 "(없음)"이 정상)
 - 세션을 마칠 때 "세션 종료해줘"라고 하면 오늘 작업이 vault에 기록됩니다
 - 다음 세션에서 "이어서 하자"라고 하면 기록을 읽고 컨텍스트를 복원합니다
+- Claude: 새 세션을 열면 진행 중 작업 목록이 자동으로 로드됩니다 (처음엔 "(없음)"이 정상)
+- Codex: 자동 로드가 없으므로 세션을 시작할 때 "이어서 하자"라고 직접 말하면 됩니다
 DONE
 exit "$fail"

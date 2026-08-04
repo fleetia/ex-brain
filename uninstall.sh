@@ -13,13 +13,14 @@ ts="$(date +%Y%m%d%H%M%S)"
 
 removed=0
 for name in "${SKILLS[@]}"; do
-  target="$CLAUDE_DIR/skills/$name"
-  if [ -L "$target" ]; then
-    rm "$target"
-    removed=$((removed + 1))
-  fi
+  for target in "$CLAUDE_DIR/skills/$name" "$HOME/.agents/skills/$name"; do
+    if [ -L "$target" ]; then
+      rm "$target"
+      removed=$((removed + 1))
+    fi
+  done
 done
-echo "✓ 스킬 symlink ${removed}개 제거"
+echo "✓ 스킬 symlink ${removed}개 제거 (Claude + Codex)"
 
 if [ -f "$SETTINGS" ] && command -v jq >/dev/null 2>&1; then
   cp "$SETTINGS" "$SETTINGS.bak-$ts"
