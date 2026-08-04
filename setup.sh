@@ -17,7 +17,7 @@ KIT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VAULT="${1:-$HOME/KnowledgeBase}"
 CLAUDE_DIR="$HOME/.claude"
 SETTINGS="$CLAUDE_DIR/settings.json"
-SKILLS=(session-start session-end kb-lookup kb-routing)
+SKILLS=(session-start session-end kb-lookup kb-routing humanize-ko cognitive-rhythm-writing task-doc-writing)
 ts="$(date +%Y%m%d%H%M%S)"
 
 case "$VAULT" in
@@ -42,13 +42,14 @@ else
   echo "✓ vault 생성"
 fi
 
-# 2) 스킬·훅을 vault/_kit/ 로 복사 (킷 폴더를 나중에 지워도 동작하도록)
-mkdir -p "$VAULT/_kit/hooks"
+# 2) 스킬·훅·스크립트를 vault/_kit/ 로 복사 (킷 폴더를 나중에 지워도 동작하도록)
+mkdir -p "$VAULT/_kit/hooks" "$VAULT/_kit/scripts"
 cp "$KIT/hooks/session-context.sh" "$VAULT/_kit/hooks/session-context.sh"
 chmod +x "$VAULT/_kit/hooks/session-context.sh"
+cp "$KIT/scripts/kb_lint.py" "$VAULT/_kit/scripts/kb_lint.py"
 for name in "${SKILLS[@]}"; do
   mkdir -p "$VAULT/_kit/skills/$name"
-  cp "$KIT/skills/$name/SKILL.md" "$VAULT/_kit/skills/$name/SKILL.md"
+  cp -R "$KIT/skills/$name/." "$VAULT/_kit/skills/$name/"
 done
 # 기본 경로가 아니면 스킬 문서 속 vault 경로 표기를 실제 경로로 치환
 if [ "$VAULT" != "$HOME/KnowledgeBase" ]; then
@@ -56,7 +57,7 @@ if [ "$VAULT" != "$HOME/KnowledgeBase" ]; then
     "${SED_I[@]}" "s|~/KnowledgeBase|$VAULT|g" "$VAULT/_kit/skills/$name/SKILL.md"
   done
 fi
-echo "✓ 스킬 ${#SKILLS[@]}개 + 훅 → $VAULT/_kit/"
+echo "✓ 스킬 ${#SKILLS[@]}개 + 훅 + lint 스크립트 → $VAULT/_kit/"
 
 # 3) ~/.claude/skills/ symlink
 mkdir -p "$CLAUDE_DIR/skills"
@@ -141,6 +142,15 @@ if [ -n "$out" ]; then
 else
   echo "✗ 훅이 아무것도 출력하지 않았습니다 — bash $VAULT/_kit/hooks/session-context.sh 로 직접 확인하세요"
   fail=1
+fi
+if command -v python3 >/dev/null 2>&1; then
+  if python3 "$VAULT/_kit/scripts/kb_lint.py" "$VAULT" --check >/dev/null 2>&1; then
+    echo "✓ lint 스모크 테스트 통과 (vault 위생 정상)"
+  else
+    echo "· lint가 문제를 발견했습니다 — python3 $VAULT/_kit/scripts/kb_lint.py 로 상세 확인"
+  fi
+else
+  echo "· python3 없음 — lint 검증 생략 (세션 기록·복원은 정상 동작)"
 fi
 
 cat <<'DONE'

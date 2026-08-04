@@ -27,6 +27,8 @@ if [ -z "$recent" ]; then
     -exec stat -c '%Y'$'\t''%n' {} + 2>/dev/null | sort -rn | head -12 | cut -f2-)
 fi
 
+lint_line=$(cat "$VAULT/_kit/lint-latest.txt" 2>/dev/null)
+
 context="[지식 vault — SessionStart hook 자동 주입]
 작업 착수 전 vault 조회 규칙은 kb-lookup skill을 따를 것.
 세션을 마칠 때는 session-end skill로 기록을 남길 것.
@@ -37,8 +39,9 @@ ${tasks:-(없음)}
 ## 최근 7일 수정된 문서 ($VAULT 기준)
 ${recent:-(없음)}
 
-## 인덱스
-10.notes/INDEX.md · 20.work/INDEX.md · 진입점 $VAULT/CLAUDE.md"
+## Vault 상태
+${lint_line:-(lint 미실행 — session-end가 자동 실행)}
+인덱스: 10.notes/INDEX.md · 20.work/INDEX.md · 진입점 $VAULT/CLAUDE.md"
 
 if command -v jq >/dev/null 2>&1; then
   printf '%s' "$context" | jq -Rs '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:.}}'

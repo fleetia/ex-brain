@@ -28,16 +28,29 @@ AI와 일하다 보면 이런 패턴이 반복됩니다.
 
 ## 구성물
 
+**워크플로우 (기록·복원·조회)**
+
 | 종류 | 이름 | 역할 |
 |---|---|---|
-| 스킬 | `session-end` | 세션 종료 시 완료·미완료·과정 노트를 기록 |
+| 스킬 | `session-end` | 세션 종료 시 완료·미완료·과정 노트를 기록하고 lint까지 실행 |
 | 스킬 | `session-start` | 이전 기록을 읽고 컨텍스트 복원 |
 | 스킬 | `kb-lookup` | 새 작업 착수 전에 과거 기록을 먼저 검색 |
 | 스킬 | `kb-routing` | 문서를 어느 폴더에 둘지, 인덱스를 어떻게 관리할지 규칙 |
-| 훅 | `session-context.sh` | 세션이 열릴 때마다 진행 중 작업·최근 문서 목록을 자동 주입 |
+| 훅 | `session-context.sh` | 세션이 열릴 때마다 진행 중 작업·최근 문서·vault 상태를 자동 주입 |
+| 스크립트 | `kb_lint.py` | vault 위생 검사 — 깨진 링크, 인덱스 누락, 폴더-상태 불일치 |
 | 템플릿 | `vault-template/` | 지식 폴더 초기 구조 |
 
-스킬은 Claude가 상황에 맞게 알아서 쓰는 지침서이고, 훅은 세션이 열릴 때 자동으로 도는 스크립트입니다. 설치하면 스킬·훅 원본이 vault 안(`_kit/`)에 들어가므로, 규칙을 바꾸고 싶으면 그 파일을 직접(또는 Claude에게 시켜서) 고치면 됩니다.
+**글쓰기 스킬** — 기록과 별개로, 글을 쓰는 모든 작업에서 Claude가 알아서 참고합니다.
+
+| 이름 | 역할 |
+|---|---|
+| `humanize-ko` | 한국어 글의 번역투·상투 표현·균일한 리듬을 자연스럽게 다듬기 (진단 스크립트 포함) |
+| `cognitive-rhythm-writing` | 처음부터 끝까지 읽는 해설·블로그형 글에 강약과 호흡 만들기 |
+| `task-doc-writing` | 회사 전체가 읽는 작업 문서를 체크리스트 뭉치 대신 이해하기 쉬운 서술형으로 |
+
+스킬은 Claude가 상황에 맞게 알아서 쓰는 지침서이고, 훅은 세션이 열릴 때 자동으로 도는 스크립트입니다. 설치하면 스킬·훅·스크립트 원본이 vault 안(`_kit/`)에 들어가므로, 규칙을 바꾸고 싶으면 그 파일을 직접(또는 Claude에게 시켜서) 고치면 됩니다.
+
+vault 위생은 자동으로 관리됩니다. 세션을 종료할 때마다 lint가 돌아서 깨진 링크나 인덱스 누락을 그 자리에서 고치고, 결과 요약 한 줄이 다음 세션 시작 시 함께 주입됩니다.
 
 ## 설치
 
@@ -88,7 +101,10 @@ setup.sh가 기존 설정을 백업한 뒤 훅만 추가합니다. 이미 다른
 터미널에서 `bash ~/KnowledgeBase/_kit/hooks/session-context.sh`를 직접 실행해보세요. 출력이 나오면 훅 자체는 정상이고, 설정 등록 문제입니다. 훅 변경은 새 세션부터 적용된다는 점도 확인하세요.
 
 **Q. 지우고 싶어요.**
-`~/.claude/skills/`에서 이 킷의 symlink 4개(session-start, session-end, kb-lookup, kb-routing)를 지우고, `~/.claude/settings.json`에서 SessionStart 항목을 제거하면 됩니다. vault는 그냥 markdown 폴더라 원하는 만큼 보관하면 됩니다.
+`~/.claude/skills/`에서 이 킷의 symlink 7개(session-start, session-end, kb-lookup, kb-routing, humanize-ko, cognitive-rhythm-writing, task-doc-writing)를 지우고, `~/.claude/settings.json`에서 SessionStart 항목을 제거하면 됩니다. vault는 그냥 markdown 폴더라 원하는 만큼 보관하면 됩니다.
+
+**Q. lint가 뭘 하나요? 꼭 필요한가요?**
+문서가 쌓이면 링크가 깨지거나 인덱스에서 빠진 문서가 생기는데, 그걸 AI가 검색할 때 놓치지 않도록 세션 종료 시마다 자동 점검합니다. python3가 필요하지만(macOS 기본 포함), 없어도 기록·복원 기능은 전부 정상 동작합니다.
 
 **Q. 규칙을 바꾸고 싶어요.**
 `vault/_kit/skills/` 안의 SKILL.md가 원본입니다. 예를 들어 기록 양식에 섹션을 추가하고 싶으면 `session-end/SKILL.md`를 고치면 됩니다. Claude에게 "session-end 스킬에 ○○ 섹션 추가해줘"라고 시켜도 됩니다.
