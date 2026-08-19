@@ -173,6 +173,16 @@ grep -Fq -- '.targetCommitish == $tagCommit' .github/workflows/release.yml
 grep -Fq -- '.name == $cli and .size > 0' .github/workflows/release.yml
 grep -Fq -- '.name == $app and .size > 0' .github/workflows/release.yml
 grep -Fq -- 'EXISTING_TAG_COMMIT" != "$GITHUB_SHA"' .github/workflows/release.yml
+if [ "$(grep -Fc -- 'git rev-parse --verify "refs/tags/$TAG^{commit}"' .github/workflows/release.yml)" -ne 2 ]; then
+  echo "✗ release workflow의 tag 존재 확인이 fail-closed 하지 않습니다."
+  exit 1
+fi
+missing_tag="v0.0.0-ai-session-kit-missing-tag"
+missing_tag_commit="$(git rev-parse --verify "refs/tags/$missing_tag^{commit}" 2>/dev/null || true)"
+if [ -n "$missing_tag_commit" ]; then
+  echo "✗ 없는 release tag를 존재하는 commit으로 잘못 해석했습니다: $missing_tag_commit"
+  exit 1
+fi
 if grep -Fq -- '.targetCommitish == $sha' .github/workflows/release.yml; then
   echo "✗ 기존 release를 현재 workflow commit과 비교해 후속 main push를 실패시킵니다."
   exit 1

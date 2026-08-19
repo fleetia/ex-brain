@@ -55,7 +55,7 @@ jobs:
           CLI_ASSET="ai-session-kit-cli-$TAG.zip"
           APP_ASSET="ai-session-kit-app-$TAG.zip"
           if RELEASE_JSON="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,targetCommitish,assets 2>/dev/null)"; then
-            TAG_COMMIT="$(git rev-parse "$TAG^{commit}" 2>/dev/null || true)"
+            TAG_COMMIT="$(git rev-parse --verify "refs/tags/$TAG^{commit}" 2>/dev/null || true)"
             if [ -z "$TAG_COMMIT" ]; then
               echo "release $TAG는 있지만 checkout에서 대응 tag commit을 확인할 수 없습니다."
               exit 1
@@ -76,7 +76,7 @@ jobs:
             exit 1
           fi
 
-          EXISTING_TAG_COMMIT="$(git rev-parse "$TAG^{commit}" 2>/dev/null || true)"
+          EXISTING_TAG_COMMIT="$(git rev-parse --verify "refs/tags/$TAG^{commit}" 2>/dev/null || true)"
           if [ -n "$EXISTING_TAG_COMMIT" ] && [ "$EXISTING_TAG_COMMIT" != "$GITHUB_SHA" ]; then
             echo "release 없는 기존 tag $TAG가 현재 artifact commit과 다릅니다: $EXISTING_TAG_COMMIT"
             exit 1
