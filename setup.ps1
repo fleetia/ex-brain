@@ -224,7 +224,11 @@ function Move-FileAtomically {
   )
 
   if ([System.IO.File]::Exists($Destination)) {
-    [System.IO.File]::Replace($Source, $Destination, $null)
+    [System.IO.File]::Replace(
+      $Source,
+      $Destination,
+      [System.Management.Automation.Language.NullString]::Value
+    )
   }
   else {
     Move-Item -LiteralPath $Source -Destination $Destination
