@@ -68,11 +68,11 @@ work-dates: [YYYY-MM-DD]
 
 ### 4. Vault lint
 
-`__KB_LINT_COMMAND__`를 실행한다. setup.sh가 이 자리를 local runtime과 vault의 실제 경로로 바꾼다.
+`__KB_LINT_COMMAND__`를 실행한다. setup.sh 또는 setup.ps1이 이 자리를 local runtime과 vault에 맞는 명령으로 바꾼다.
 
 - 이번 세션이 만든 깨진 링크, INDEX 누락, 폴더-status 불일치는 즉시 수정하고 다시 검사한다.
 - 세션과 무관한 기존 문제는 수정하지 않고 태스크 파일의 `## 미완료`에 남긴다.
-- python3가 없으면 조용히 건너뛴다.
+- Python 3가 없으면 조용히 건너뛴다.
 
 ### 5. 완료 보고
 

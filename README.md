@@ -8,7 +8,7 @@ AI 세션 기록 킷의 **단일 원본**입니다. 이 폴더를 직접 배포�
 
 ## 구조
 
-- `skills/` `hooks/` `scripts/` `vault-template/` `setup.sh` `uninstall.sh` — 킷 본체 (두 배포판 공통)
+- `skills/` `hooks/` `scripts/` `vault-template/` `setup.sh` `setup.ps1` `uninstall.sh` `uninstall.ps1` — macOS·Linux·Windows 공통 킷 본체
 - `readmes/README-cli.md` — 터미널·Claude Code 사용자용 안내
 - `readmes/README-app.md` — Claude/Codex 앱 사용자용 안내 (일반인)
 - `build.sh` — `dist/cli`, `dist/app` 산출물 생성 (README만 다르고 코드는 동일)
@@ -32,6 +32,8 @@ bash build.sh              # 저장소 안 dist/에 cli/, app/ 생성
 bash build.sh /tmp/output  # 원하는 출력 폴더 지정
 bash tests/check-release.sh
 ```
+
+native Windows installer 회귀 검증은 GitHub Actions의 `windows-latest` job에서 Windows PowerShell 5.1로 실행합니다.
 
 `build.sh`는 자신이 만든 marker가 있는 `cli/`, `app/`만 교체합니다. 같은 이름의 일반 폴더나 symlink가 있으면 내용을 건드리지 않고 실패합니다.
 

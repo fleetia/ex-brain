@@ -37,8 +37,8 @@ AI와 일하다 보면 이런 패턴이 반복됩니다.
 | 스킬 | `kb-lookup` | 새 작업 착수 전에 과거 기록을 먼저 검색 |
 | 스킬 | `kb-routing` | 문서를 어느 폴더에 둘지, 인덱스를 어떻게 관리할지 규칙 |
 | 스킬 | `weekly-summary` / `monthly-summary` | 주간·월간 요약 생성 — **자동으로 돌지 않고, 요청할 때만** |
-| 훅 | `session-context.sh` | 세션이 열릴 때마다 진행 중 작업·최근 문서·vault 상태를 자동 주입 |
-| 훅 | `check-pii.sh` | 지원되는 쓰기 tool input에서 이메일·전화번호·토큰 등 민감정보를 저장 전에 검사 |
+| 훅 | `session-context.sh` / `.ps1` | 세션이 열릴 때마다 진행 중 작업·최근 문서·vault 상태를 자동 주입 |
+| 훅 | `check-pii.sh` / `.ps1` | 지원되는 쓰기 tool input에서 이메일·전화번호·토큰 등 민감정보를 저장 전에 검사 |
 | 스크립트 | `kb_lint.py` | vault 위생 검사 — 깨진 링크, 인덱스 누락, 폴더-상태 불일치 |
 | 템플릿 | `vault-template/` | 지식 폴더 초기 구조 (기록 예시 1개 포함) |
 
@@ -56,22 +56,30 @@ vault 위생은 자동으로 관리됩니다. 세션을 종료할 때마다 lint
 
 ## 설치
 
-지원 환경은 macOS와 Linux입니다. Windows에서는 WSL 안에 설치할 수 있지만, 그 설정은 WSL에서 실행한 agent에만 적용됩니다. native Windows 앱 설치는 아직 지원하지 않습니다. 기존 JSON 설정에 훅을 합치고 민감정보 검사를 사용하려면 `jq`가 필요하며, 없으면 설치 활성화를 멈춘 뒤 재실행 방법을 안내합니다.
+지원 환경은 macOS, Linux, native Windows입니다. Windows는 기본 내장된 Windows PowerShell 5.1 이상을 사용하며 Codex의 native Windows 환경에서는 Windows 11을 권장합니다. Claude Code의 Bash 기능을 함께 쓰고 싶다면 Git for Windows를 추가할 수 있지만, 이 킷의 Windows hook은 PowerShell을 명시해 Git Bash 없이도 동작합니다. WSL은 별도 Linux 환경이므로 WSL 안에서 쓸 때는 Bash 설치를 따로 실행합니다.
 
 1. 이 폴더를 받아서 아무 곳에나 둡니다
-2. 터미널에서 실행합니다:
+2. 운영체제에 맞는 터미널에서 실행합니다.
+
+   macOS·Linux·WSL:
 
    ```bash
    bash setup.sh
    ```
 
-   vault를 다른 위치에 만들고 싶으면 경로를 붙입니다. 공백이 있는 경로는 quote로 감쌉니다: `bash setup.sh "$HOME/Library/Mobile Documents/my-vault"`
+   native Windows PowerShell:
+
+   ```powershell
+   powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
+   ```
+
+   vault를 다른 위치에 만들고 싶으면 macOS·Linux에서는 `bash setup.sh "$HOME/Library/Mobile Documents/my-vault"`, Windows에서는 `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -VaultPath "$HOME\Documents\my-vault"`처럼 지정합니다.
 
 3. 새 세션을 엽니다. Claude Code는 바로 동작합니다. Codex는 `/hooks`에서 새 command hook을 검토하고 신뢰합니다
 
-여러 번 실행해도 안전합니다. 기존 vault에는 빠진 template 파일만 채우고 기존 문서는 보존합니다. 수정하지 않은 구버전 기본 CLAUDE.md만 새 privacy 규칙으로 migration하고 backup을 남깁니다. 다른 도구가 만든 skill symlink나 폴더와 충돌하면 그대로 보존하고 설치를 멈춥니다. 올바른 JSON에 등록된 다른 hook은 지우지 않고 함께 유지합니다.
+여러 번 실행해도 안전합니다. 기존 vault에는 빠진 template 파일만 채우고 기존 문서는 보존합니다. 수정하지 않은 구버전 기본 CLAUDE.md만 새 privacy 규칙으로 migration하고 backup을 남깁니다. 다른 도구가 만든 skill 연결이나 폴더와 충돌하면 그대로 보존하고 설치를 멈춥니다. 올바른 JSON에 등록된 다른 hook은 지우지 않고 함께 유지합니다. Bash판의 JSON 병합과 민감정보 검사에는 `jq`가 필요하지만 Windows PowerShell판은 내장 JSON 기능을 사용해 별도 `jq`가 필요 없습니다.
 
-스킬은 Claude Code의 `~/.claude/skills/`와 Codex의 `~/.agents/skills/`에 연결됩니다. 훅은 Claude Code의 `~/.claude/settings.json`과 Codex의 `~/.codex/hooks.json`에 각각 등록됩니다. Codex는 새 hook이나 변경된 hook의 hash를 처음 한 번 `/hooks`에서 신뢰해야 실행합니다.
+스킬은 Claude Code의 `~/.claude/skills/`와 Codex의 `~/.agents/skills/`에 연결됩니다. Windows에서는 관리자 권한이 필요 없는 directory junction을 사용합니다. 훅은 Claude Code의 `~/.claude/settings.json`과 Codex의 `~/.codex/hooks.json`에 각각 등록되고, Codex에는 native 실행용 `commandWindows`도 함께 설정됩니다. Codex는 새 hook이나 변경된 hook의 hash를 처음 한 번 `/hooks`에서 신뢰해야 실행합니다.
 
 ## 일상 사용법
 
@@ -104,10 +112,10 @@ KnowledgeBase/
 아니요. 남길 게 없는 세션은 그냥 닫아도 됩니다. 다만 "이건 다음에 이어서 해야 하는데" 싶은 세션만큼은 종료를 남기는 게 이 시스템의 핵심 습관입니다.
 
 **Q. 이미 Claude/Codex 설정에 다른 훅이 있어요.**
-setup.sh는 기존 JSON을 백업한 뒤 이 킷이 소유한 handler만 추가하거나 갱신합니다. 다른 handler는 그대로 둡니다. `jq`가 없거나 JSON이 올바르지 않으면 기존 runtime·hook·skill 연결을 보존한 채 중단하고, 문제를 고친 뒤 같은 명령을 다시 실행하도록 안내합니다.
+setup.sh와 setup.ps1은 기존 JSON을 백업한 뒤 이 킷이 소유한 handler만 추가하거나 갱신합니다. 다른 handler는 그대로 둡니다. JSON이 올바르지 않거나 Bash판에 `jq`가 없으면 기존 runtime·hook·skill 연결을 보존한 채 중단하고, 문제를 고친 뒤 같은 명령을 다시 실행하도록 안내합니다.
 
 **Q. 훅이 안 도는 것 같아요.**
-터미널에서 `KB_VAULT="$HOME/KnowledgeBase" AI_SESSION_KIT_STATE_DIR="$HOME/.ai-session-kit" bash "$HOME/.ai-session-kit/runtime/hooks/session-context.sh"`를 실행해보세요. 출력이 나오면 훅 자체는 정상이고, 설정 등록 문제입니다. 훅 변경은 새 세션부터 적용된다는 점도 확인하세요.
+macOS·Linux에서는 `KB_VAULT="$HOME/KnowledgeBase" AI_SESSION_KIT_STATE_DIR="$HOME/.ai-session-kit" bash "$HOME/.ai-session-kit/runtime/hooks/session-context.sh"`, Windows PowerShell에서는 `& "$HOME\.ai-session-kit\runtime\hooks\session-context.ps1" -VaultPath "$HOME\KnowledgeBase" -StateDirectory "$HOME\.ai-session-kit"`를 실행해보세요. 출력이 나오면 훅 자체는 정상이고, 설정 등록 문제입니다. 훅 변경은 새 세션부터 적용된다는 점도 확인하세요.
 
 Codex에서는 `/hooks`도 확인하세요. 설치 또는 업데이트로 command hook이 바뀌면 새 hash를 다시 신뢰해야 합니다.
 
@@ -115,13 +123,13 @@ Codex에서는 `/hooks`도 확인하세요. 설치 또는 업데이트로 comman
 vault는 평범한 markdown 폴더라서 지금은 노트북이 고장 나면 같이 사라집니다. 둘 중 하나를 권합니다: ① vault에서 `git init` 후 주기적으로 커밋하고 private repo에 올리기. ② 내 계정의 비공개 Dropbox, OneDrive, iCloud Drive 폴더 안에 vault를 만들기. AGENTS.md와 CLAUDE.md는 agent 지침이므로, 모르는 사람이 쓸 수 있는 공유 폴더나 public 저장소에는 두지 않습니다. 경로에 공백이 있어도 quote로 감싸면 됩니다. 동기화 전에 여러 컴퓨터에서 같은 파일을 동시에 수정하는 것은 피하세요.
 
 **Q. 지우고 싶어요.**
-`bash uninstall.sh`를 실행하면 스킬 연결과 훅 등록이 제거됩니다. vault는 그대로 남으니, 더 이상 필요 없으면 폴더째 지우면 됩니다.
+macOS·Linux·WSL에서는 `bash uninstall.sh`, native Windows에서는 `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1`을 실행하면 스킬 연결과 훅 등록이 제거됩니다. vault는 그대로 남으니, 더 이상 필요 없으면 폴더째 지우면 됩니다.
 
 **Q. lint가 뭘 하나요? 꼭 필요한가요?**
-문서가 쌓이면 링크가 깨지거나 인덱스에서 빠진 문서가 생기는데, 그걸 AI가 검색할 때 놓치지 않도록 세션 종료 시마다 자동 점검합니다. python3가 필요하지만, 없어도 기록·복원 기능은 정상 동작합니다.
+문서가 쌓이면 링크가 깨지거나 인덱스에서 빠진 문서가 생기는데, 그걸 AI가 검색할 때 놓치지 않도록 세션 종료 시마다 자동 점검합니다. Python 3가 필요하지만, 없어도 기록·복원 기능은 정상 동작합니다.
 
 **Q. 규칙을 바꾸고 싶어요.**
-배포받아 푼 원본 폴더의 `skills/`를 수정한 뒤 setup.sh를 다시 실행합니다. `~/.ai-session-kit/runtime/`은 installer가 교체하는 설치 사본이므로 직접 수정하지 않습니다. Claude에게 원본 폴더를 보여주고 "session-end 스킬에 ○○ 섹션을 추가한 뒤 다시 설치해줘"라고 시켜도 됩니다.
+배포받아 푼 원본 폴더의 `skills/`를 수정한 뒤 운영체제에 맞는 setup.sh 또는 setup.ps1을 다시 실행합니다. `~/.ai-session-kit/runtime/`은 installer가 교체하는 설치 사본이므로 직접 수정하지 않습니다. Claude에게 원본 폴더를 보여주고 "session-end 스킬에 ○○ 섹션을 추가한 뒤 다시 설치해줘"라고 시켜도 됩니다.
 
 **Q. 민감정보 차단이 뜨는데요?**
 지원되는 파일 쓰기 요청에 이메일·전화번호·API 토큰 같은 패턴이 들어 있다는 뜻입니다. 고객이나 동료의 실명·연락처는 역할명("담당 디자이너", "고객 A")으로 바꿔 저장하는 습관을 권합니다. 예시값이라 괜찮다면 `example.com`, `010-0000-0000` 같은 명백한 placeholder 형태로 바꾸면 통과됩니다.

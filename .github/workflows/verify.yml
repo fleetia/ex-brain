@@ -16,3 +16,12 @@ jobs:
 
       - name: Check release artifacts
         run: bash tests/check-release.sh
+
+  windows-native:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check native Windows installer and hooks
+        shell: powershell
+        run: powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\tests\windows-installer.ps1

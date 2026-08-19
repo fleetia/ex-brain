@@ -36,6 +36,19 @@ done < <(
     -print0
 )
 
+while IFS= read -r -d '' powershell_file; do
+  if [ "$(od -An -tx1 -N3 "$powershell_file" | tr -d '[:space:]')" != 'efbbbf' ]; then
+    echo "✗ Windows PowerShell 5.1 호환 UTF-8 BOM이 없습니다: $powershell_file"
+    exit 1
+  fi
+done < <(
+  find . -type f -name '*.ps1' \
+    -not -path './.git/*' \
+    -not -path './dist/*' \
+    -not -path './node_modules/*' \
+    -print0
+)
+
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*.py'
 AI_SESSION_KIT_TEST_BASH="$BASH_BIN" "$BASH_BIN" tests/installer-hooks.sh
 
@@ -166,6 +179,14 @@ for variant in cli app; do
   cmp "readmes/README-$variant.md" "$ARTIFACTS/$variant/README.md"
   cmp "vault-template/90.private/README.md" "$ARTIFACTS/$variant/vault-template/90.private/README.md"
 done
+
+for workflow in .github/workflows/verify.yml .github/workflows/release.yml; do
+  grep -Fq -- 'runs-on: windows-latest' "$workflow"
+  grep -Fq -- 'tests\windows-installer.ps1' "$workflow"
+done
+grep -Fq -- 'needs: windows-native' .github/workflows/release.yml
+grep -Fq -- '"commandWindows": "__SESSION_HOOK_WINDOWS_COMMAND__"' codex-hooks-snippet.json
+grep -Fq -- '"commandWindows": "__PII_HOOK_WINDOWS_COMMAND__"' codex-hooks-snippet.json
 
 grep -Fq -- '--target "$GITHUB_SHA"' .github/workflows/release.yml
 grep -Fq -- '--json isDraft,targetCommitish,assets' .github/workflows/release.yml

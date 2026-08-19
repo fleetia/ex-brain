@@ -8,6 +8,7 @@
           {
             "type": "command",
             "command": "__SESSION_HOOK_COMMAND__",
+            "commandWindows": "__SESSION_HOOK_WINDOWS_COMMAND__",
             "timeout": 10,
             "statusMessage": "지식베이스 컨텍스트 로딩..."
           }
@@ -21,6 +22,7 @@
           {
             "type": "command",
             "command": "__PII_HOOK_COMMAND__",
+            "commandWindows": "__PII_HOOK_WINDOWS_COMMAND__",
             "timeout": 10
           }
         ]

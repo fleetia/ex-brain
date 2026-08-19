@@ -28,21 +28,20 @@ AI와 작업 ──▶ "세션 종료해줘" ──▶ 내 지식 폴더에 기�
 ## 준비물
 
 - **Claude Code 또는 Codex** — 내 컴퓨터의 파일을 만들고 고칠 수 있는 로컬 agent가 필요합니다. 웹 브라우저 전용 챗에는 설치할 수 없습니다.
-- **macOS 또는 Linux** — 설치 스크립트는 Bash와 symlink를 사용합니다. Windows에서는 WSL 안에 설치할 수 있지만, 그 설정은 WSL 안에서 실행한 agent에만 적용됩니다. native Windows 앱 설치는 아직 지원하지 않습니다.
-- `bash` — 설치와 업데이트에 필요합니다.
-- `jq` — 기존 앱 설정에 훅을 안전하게 합치고, 민감정보 검사를 켜는 데 필요합니다. 없으면 설정을 건드리지 않고 설치 활성화를 멈추므로, `jq`를 설치한 뒤 setup.sh를 다시 실행합니다.
+- **macOS, Linux 또는 Windows** — native Windows는 Windows PowerShell 5.1 이상을 사용하며 Codex에서는 Windows 11을 권장합니다. Claude Code의 Bash 기능을 함께 쓰고 싶다면 Git for Windows를 추가할 수 있지만, 이 킷 설치에는 필요하지 않습니다.
+- macOS·Linux·WSL은 `bash`와 `jq`가 필요합니다. native Windows PowerShell판은 내장 JSON 기능을 사용하므로 `jq`가 필요 없습니다.
 
 ## 설치
 
 가장 쉬운 방법은 **AI에게 시키는 것**입니다.
 
 1. 이 폴더(압축을 받았다면 푼 폴더)를 AI 앱에서 엽니다
-2. 이렇게 말합니다: **"이 폴더의 setup.sh를 실행해서 킷을 설치해줘"**
+2. macOS·Linux에서는 **"이 폴더의 setup.sh를 실행해서 킷을 설치해줘"**, Windows에서는 **"이 폴더의 setup.ps1을 PowerShell로 실행해서 킷을 설치해줘"**라고 말합니다
 3. 설치가 끝나면 새 세션을 엽니다. Claude는 바로 동작하고, Codex는 `/hooks`에서 새 훅을 검토해 신뢰한 뒤 동작합니다
 
-터미널이 익숙하면 직접 `bash setup.sh`를 실행해도 됩니다. 실행이 멈추면 AI에게 로그를 보여주고 원인을 진단해 달라고 하세요. `jq`, JSON, 지원 환경 문제를 고친 뒤 같은 setup.sh를 다시 실행해야 ownership 확인과 실패 복구가 유지됩니다.
+터미널이 익숙하면 macOS·Linux에서 `bash setup.sh`, Windows PowerShell에서 `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1`을 직접 실행해도 됩니다. WSL과 native Windows는 설정이 분리되어 있으므로 실제로 agent를 실행할 환경에서 각각 설치합니다. 실행이 멈추면 AI에게 로그를 보여주고 원인을 진단해 달라고 하세요. JSON이나 지원 환경 문제를 고친 뒤 같은 설치 스크립트를 다시 실행해야 ownership 확인과 실패 복구가 유지됩니다.
 
-여러 번 설치해도 안전합니다. 이미 있는 vault에는 빠진 기본 폴더·파일만 추가하고 기존 문서는 덮어쓰지 않습니다. 구버전이 배포한 기본 CLAUDE.md를 수정 없이 쓰고 있었다면 새 privacy 규칙으로 갱신하고 먼저 backup을 남깁니다. 다른 도구가 만든 skill symlink나 폴더와 충돌하면 그대로 보존하고 설치를 멈춥니다. 올바른 JSON에 등록된 다른 hook은 지우지 않고 함께 유지합니다.
+여러 번 설치해도 안전합니다. 이미 있는 vault에는 빠진 기본 폴더·파일만 추가하고 기존 문서는 덮어쓰지 않습니다. 구버전이 배포한 기본 CLAUDE.md를 수정 없이 쓰고 있었다면 새 privacy 규칙으로 갱신하고 먼저 backup을 남깁니다. 다른 도구가 만든 skill 연결이나 폴더와 충돌하면 그대로 보존하고 설치를 멈춥니다. Windows의 skill 연결은 관리자 권한이 필요 없는 directory junction을 사용합니다. 올바른 JSON에 등록된 다른 hook은 지우지 않고 함께 유지합니다.
 
 실행되는 스킬·훅·lint는 동기화 폴더 밖인 `~/.ai-session-kit/runtime/`에 설치됩니다. vault에는 내 markdown 기록만 둬서, 동기화된 파일이 곧바로 local script로 실행되지 않게 분리합니다.
 
@@ -78,11 +77,11 @@ AI와 작업 ──▶ "세션 종료해줘" ──▶ 내 지식 폴더에 기�
 | 스킬 | `humanize-ko` | 한국어 글의 번역투·상투 표현을 자연스럽게 다듬기 |
 | 스킬 | `cognitive-rhythm-writing` | 긴 설명글·블로그 글에 강약과 호흡 만들기 |
 | 스킬 | `task-doc-writing` | 여럿이 함께 읽는 작업 문서를 이해하기 쉬운 서술형으로 |
-| 훅 (Claude·Codex) | `session-context.sh` | 세션이 열릴 때 진행 중 작업·최근 문서를 자동으로 보여줌 |
-| 훅 (Claude·Codex) | `check-pii.sh` | 지원되는 파일 쓰기 전에 이메일·전화번호·비밀번호류를 검사 |
+| 훅 (Claude·Codex) | `session-context.sh` / `.ps1` | 세션이 열릴 때 진행 중 작업·최근 문서를 자동으로 보여줌 |
+| 훅 (Claude·Codex) | `check-pii.sh` / `.ps1` | 지원되는 파일 쓰기 전에 이메일·전화번호·비밀번호류를 검사 |
 | 스크립트 | `kb_lint.py` | 기록 폴더 건강검진 — 깨진 링크, 목차 누락 등 |
 
-스킬은 AI가 상황에 맞게 알아서 참고하는 지침서입니다. 설치된 사본은 `~/.ai-session-kit/runtime/`에 있고 setup.sh가 관리합니다.
+스킬은 AI가 상황에 맞게 알아서 참고하는 지침서입니다. 설치된 사본은 `~/.ai-session-kit/runtime/`에 있고 setup.sh 또는 setup.ps1이 관리합니다.
 
 ## vault(지식 폴더) 구조
 
@@ -114,13 +113,13 @@ vault는 평범한 폴더라서 컴퓨터가 고장 나면 같이 사라집니�
 이 검사는 보조장치입니다. Claude의 Write/Edit와 Codex의 apply_patch처럼 훅이 지원하는 쓰기 도구는 파일명과 저장 결과를 미리 검사합니다. 이미 존재하는 문서의 파일명에 민감정보가 보이면 SessionStart 목록에서는 원문을 숨깁니다. 다만 shell redirect, 일부 MCP, 다른 편집기에서 직접 쓴 내용까지 모두 막는 개인정보 보호 솔루션은 아닙니다. 감지 결과에도 원문 secret은 출력하지 않습니다.
 
 **Q. 자동 로드가 안 되는 것 같아요. (Claude)**
-AI에게 "session-context.sh 훅이 등록됐는지 확인해줘"라고 말하면 진단해줍니다. 훅 변경은 새 세션부터 적용된다는 점도 확인하세요.
+AI에게 "session-context 훅이 등록됐는지 확인해줘"라고 말하면 진단해줍니다. 훅 변경은 새 세션부터 적용된다는 점도 확인하세요.
 
 **Q. 자동 로드가 안 되는 것 같아요. (Codex)**
-Codex에서 `/hooks`를 열어 `session-context.sh`와 `check-pii.sh`를 검토하고 신뢰했는지 확인하세요. 설치나 업데이트로 command가 바뀌면 다시 검토해야 합니다.
+Codex에서 `/hooks`를 열어 `session-context`와 `check-pii` hook을 검토하고 신뢰했는지 확인하세요. Windows에서는 `commandWindows`가 등록됩니다. 설치나 업데이트로 command가 바뀌면 다시 검토해야 합니다.
 
 **Q. 지우고 싶어요.**
-AI에게 "이 킷의 uninstall.sh를 실행해줘"라고 말하면 스킬 연결과 훅 등록이 제거됩니다. vault는 그대로 남으니, 더 이상 필요 없으면 폴더째 지우면 됩니다.
+macOS·Linux에서는 AI에게 "이 킷의 uninstall.sh를 실행해줘", Windows에서는 "uninstall.ps1을 PowerShell로 실행해줘"라고 말하면 스킬 연결과 훅 등록이 제거됩니다. vault는 그대로 남으니, 더 이상 필요 없으면 폴더째 지우면 됩니다.
 
 **Q. 규칙을 바꾸고 싶어요.**
-배포받아 푼 원본 폴더의 `skills/`를 수정한 뒤 setup.sh를 다시 실행합니다. `~/.ai-session-kit/runtime/`은 installer가 교체하는 설치 사본이므로 직접 수정하지 않습니다. AI에게 원본 폴더를 보여주고 "session-end 스킬에 ○○ 섹션을 추가한 뒤 다시 설치해줘"라고 시키면 됩니다.
+배포받아 푼 원본 폴더의 `skills/`를 수정한 뒤 운영체제에 맞는 setup.sh 또는 setup.ps1을 다시 실행합니다. `~/.ai-session-kit/runtime/`은 installer가 교체하는 설치 사본이므로 직접 수정하지 않습니다. AI에게 원본 폴더를 보여주고 "session-end 스킬에 ○○ 섹션을 추가한 뒤 다시 설치해줘"라고 시키면 됩니다.

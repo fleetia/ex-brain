@@ -2,11 +2,15 @@
 LICENSE
 README.md
 codex-hooks-snippet.json
+hooks/check-pii.ps1
 hooks/check-pii.sh
+hooks/session-context.ps1
 hooks/session-context.sh
 legacy-vault-entrypoint-v0.md
+scripts/kb-lint.ps1
 scripts/kb_lint.py
 settings-snippet.json
+setup.ps1
 setup.sh
 skills/cognitive-rhythm-writing/SKILL.md
 skills/cognitive-rhythm-writing/references/origin-and-adaptation.md
@@ -21,6 +25,7 @@ skills/session-end/SKILL.md
 skills/session-start/SKILL.md
 skills/task-doc-writing/SKILL.md
 skills/weekly-summary/SKILL.md
+uninstall.ps1
 uninstall.sh
 vault-template/00.memory/tasks/cancelled/.gitkeep
 vault-template/00.memory/tasks/done/.gitkeep
