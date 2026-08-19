@@ -415,7 +415,9 @@ try {
         tool_input = [ordered]@{ file_path = $outsidePath; content = ('password=' + $secretValue) }
     })
     $outsideResult = Invoke-ChildPowerShell -ScriptPath $piiHook -Arguments @('-VaultPath', $vaultA, '-StateDirectory', $stateDirectory) -InputText $outsidePayload
-    Assert-True ($outsideResult.Status -eq 0 -and [string]::IsNullOrWhiteSpace($outsideResult.Stdout)) 'vault 밖 Write를 검사했습니다.'
+    $outsideStderr = ([string]$outsideResult.Stderr).Replace($secretValue, '<redacted>').Trim()
+    $outsideMessage = "vault 밖 Write를 검사했습니다. status=$($outsideResult.Status); stdoutLength=$(([string]$outsideResult.Stdout).Length); stderr=$outsideStderr"
+    Assert-True ($outsideResult.Status -eq 0 -and [string]::IsNullOrWhiteSpace($outsideResult.Stdout)) $outsideMessage
 
     $emailValue = 'private.person@real-domain.invalid'
     $writePayload = ConvertTo-CompactJson ([ordered]@{
