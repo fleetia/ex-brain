@@ -49,13 +49,20 @@ function Invoke-ChildPowerShell {
     ) + $Arguments
 
     try {
-        if ($null -eq $InputText) {
-            $stdoutLines = @(& $script:powerShellExe @nativeArguments 2> $stderrPath)
+        $previousErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            if ($null -eq $InputText) {
+                $stdoutLines = @(& $script:powerShellExe @nativeArguments 2> $stderrPath)
+            }
+            else {
+                $stdoutLines = @($InputText | & $script:powerShellExe @nativeArguments 2> $stderrPath)
+            }
+            $status = $LASTEXITCODE
         }
-        else {
-            $stdoutLines = @($InputText | & $script:powerShellExe @nativeArguments 2> $stderrPath)
+        finally {
+            $ErrorActionPreference = $previousErrorActionPreference
         }
-        $status = $LASTEXITCODE
         $stderr = if (Test-Path -LiteralPath $stderrPath) {
             [System.IO.File]::ReadAllText($stderrPath)
         }
@@ -81,8 +88,15 @@ function Invoke-PowerShellHookCommand {
 
     $stderrPath = Join-Path $script:testRoot ('powershell-command-stderr-' + [guid]::NewGuid().ToString('N') + '.txt')
     try {
-        $stdoutLines = @($InputText | & $script:powerShellExe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $Command 2> $stderrPath)
-        $status = $LASTEXITCODE
+        $previousErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            $stdoutLines = @($InputText | & $script:powerShellExe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $Command 2> $stderrPath)
+            $status = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
         $stderr = if (Test-Path -LiteralPath $stderrPath) {
             [System.IO.File]::ReadAllText($stderrPath)
         }
@@ -118,8 +132,15 @@ function Invoke-WindowsHookCommand {
             Push-Location -LiteralPath $WorkingDirectory
             $locationChanged = $true
         }
-        $stdoutLines = @($InputText | & $commandInterpreter /D /S /C $Command 2> $stderrPath)
-        $status = $LASTEXITCODE
+        $previousErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            $stdoutLines = @($InputText | & $commandInterpreter /D /S /C $Command 2> $stderrPath)
+            $status = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
         $stderr = if (Test-Path -LiteralPath $stderrPath) {
             [System.IO.File]::ReadAllText($stderrPath)
         }
@@ -298,6 +319,7 @@ try {
     $env:AI_SESSION_KIT_USER_HOME = $rejectedHome
     $rejectedWslInstall = Invoke-ChildPowerShell -ScriptPath $setupScript -Arguments @('-VaultPath', '\\wsl.localhost\distro\mnt\c\Vault')
     Assert-True ($rejectedWslInstall.Status -ne 0) 'WSL UNC vault preflight가 성공했습니다.'
+    Assert-True (-not [string]::IsNullOrWhiteSpace($rejectedWslInstall.Stderr)) 'WSL UNC vault preflight stderr를 수집하지 못했습니다.'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $rejectedHome '.ai-session-kit\install-state'))) 'WSL UNC vault preflight 실패가 state를 남겼습니다.'
     $env:AI_SESSION_KIT_USER_HOME = $userHome
 
