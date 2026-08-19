@@ -343,6 +343,7 @@ try {
                 matcher = 'startup'
                 hooks = @([ordered]@{ type = 'command'; command = 'Write-Output foreign-codex-session' })
             })
+            PreToolUse = $null
         }
     })
 
@@ -366,6 +367,7 @@ try {
     $codexConfig = [System.IO.File]::ReadAllText($codexHooks) | ConvertFrom-Json
     Assert-True ($claudeConfig.keep -eq 'claude-foreign') 'Claude foreign top-level 설정이 사라졌습니다.'
     Assert-True ($codexConfig.description -eq 'foreign description') 'Codex foreign top-level 설정이 사라졌습니다.'
+    Assert-True (($codexConfig.hooks.PreToolUse -is [System.Array]) -and $codexConfig.hooks.PreToolUse.Count -eq 1) 'Codex singleton PreToolUse array가 보존되지 않았습니다.'
     Assert-True (@(Get-HookHandlers $claudeConfig 'SessionStart' | Where-Object { $_.command -eq 'Write-Output foreign-claude-session' }).Count -eq 1) 'Claude foreign hook이 사라졌습니다.'
     Assert-True (@(Get-HookHandlers $codexConfig 'SessionStart' | Where-Object { $_.command -eq 'Write-Output foreign-codex-session' }).Count -eq 1) 'Codex foreign hook이 사라졌습니다.'
     $claudeSessionHandlers = @(Get-OwnedHandlers $claudeConfig 'SessionStart' 'session-context.ps1')

@@ -192,11 +192,11 @@ function Get-ObjectProperty {
   )
 
   if ($null -eq $Object) {
-    return $null
+    return
   }
   $property = $Object.PSObject.Properties[$Name]
-  if ($null -eq $property) {
-    return $null
+  if ($null -eq $property -or $null -eq $property.Value) {
+    return
   }
   return $property.Value
 }
