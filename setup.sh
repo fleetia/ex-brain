@@ -1,238 +1,670 @@
 #!/usr/bin/env bash
 # setup.sh — AI 세션 지식 킷 설치 (멱등: 여러 번 실행해도 안전)
-#
-# 사용: bash setup.sh [vault경로]
-#   기본 vault 경로: ~/KnowledgeBase
-#
-# 하는 일:
-#   1) 지식 vault 폴더 생성 (이미 있으면 기존 내용 보존)
-#   2) 스킬·훅을 vault/_kit/ 안으로 복사
-#   3) ~/.claude/skills/ 에 스킬 symlink 연결
-#   4) ~/.claude/settings.json 에 SessionStart 훅 등록 (기존 설정을 덮어쓰지 않음)
-#   5) 배선 검증 + 훅 스모크 테스트
 
 set -euo pipefail
 
 KIT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VAULT="${1:-$HOME/KnowledgeBase}"
-CLAUDE_DIR="$HOME/.claude"
-SETTINGS="$CLAUDE_DIR/settings.json"
+USER_HOME="${AI_SESSION_KIT_USER_HOME:-$HOME}"
+VAULT="${1:-$USER_HOME/KnowledgeBase}"
+CLAUDE_DIR="$USER_HOME/.claude"
+CODEX_DIR="$USER_HOME/.codex"
+CLAUDE_SETTINGS="$CLAUDE_DIR/settings.json"
+CODEX_HOOKS="$CODEX_DIR/hooks.json"
+STATE_DIR="$USER_HOME/.ai-session-kit"
+STATE_FILE="$STATE_DIR/install-state"
+STATE_MARKER="ai-session-kit-state-v2"
+LEGACY_STATE_MARKER="ai-session-kit-state-v1"
+RUNTIME_DIR="$STATE_DIR/runtime"
+RUNTIME_MARKER=".ai-session-kit-runtime"
+RUNTIME_MARKER_CONTENT="ai-session-kit-runtime-v1"
+SESSION_HOOK_MARKER="AI_SESSION_KIT_HOOK=session-context"
+PII_HOOK_MARKER="AI_SESSION_KIT_HOOK=check-pii"
 SKILLS=(session-start session-end kb-lookup kb-routing humanize-ko cognitive-rhythm-writing task-doc-writing weekly-summary monthly-summary)
+SKILL_ROOTS=("$CLAUDE_DIR/skills" "$USER_HOME/.agents/skills")
 ts="$(date +%Y%m%d%H%M%S)"
+stage=""
+runtime_old=""
+runtime_swapped=0
+transaction_committed=0
+claude_snapshot=""
+codex_snapshot=""
+claude_had_config=0
+codex_had_config=0
+skill_snapshot_ready=0
+skill_before_exists=()
+skill_before_target=()
 
+cleanup() {
+  local status=$? index=0 root name target before rollback_failed=0
+
+  if [ "$runtime_swapped" -eq 1 ] && [ "$transaction_committed" -eq 0 ]; then
+    if [ "$claude_had_config" -eq 1 ]; then
+      cp -p "$claude_snapshot" "$CLAUDE_SETTINGS" 2>/dev/null || rollback_failed=1
+    elif [ -f "$CLAUDE_SETTINGS" ] && [ ! -L "$CLAUDE_SETTINGS" ]; then
+      rm -f -- "$CLAUDE_SETTINGS" 2>/dev/null || rollback_failed=1
+    fi
+    if [ "$codex_had_config" -eq 1 ]; then
+      cp -p "$codex_snapshot" "$CODEX_HOOKS" 2>/dev/null || rollback_failed=1
+    elif [ -f "$CODEX_HOOKS" ] && [ ! -L "$CODEX_HOOKS" ]; then
+      rm -f -- "$CODEX_HOOKS" 2>/dev/null || rollback_failed=1
+    fi
+
+    if [ "$skill_snapshot_ready" -eq 1 ]; then
+      for root in "${SKILL_ROOTS[@]}"; do
+        for name in "${SKILLS[@]}"; do
+          target="$root/$name"
+          if [ "${skill_before_exists[$index]:-0}" -eq 1 ]; then
+            before="${skill_before_target[$index]}"
+            if [ -L "$target" ]; then
+              if [ "$(readlink "$target")" != "$before" ]; then
+                rm -- "$target" 2>/dev/null && ln -s "$before" "$target" 2>/dev/null || rollback_failed=1
+              fi
+            elif [ ! -e "$target" ]; then
+              ln -s "$before" "$target" 2>/dev/null || rollback_failed=1
+            else
+              rollback_failed=1
+            fi
+          elif [ -L "$target" ] && [ "$(readlink "$target")" = "$RUNTIME_DIR/skills/$name" ]; then
+            rm -- "$target" 2>/dev/null || rollback_failed=1
+          fi
+          index=$((index + 1))
+        done
+      done
+    fi
+
+    if [ -e "$RUNTIME_DIR" ] || [ -L "$RUNTIME_DIR" ]; then
+      rm -rf -- "$RUNTIME_DIR" 2>/dev/null || rollback_failed=1
+    fi
+    if [ -n "$runtime_old" ] && [ -d "$runtime_old" ]; then
+      mv "$runtime_old" "$RUNTIME_DIR" 2>/dev/null || rollback_failed=1
+      runtime_old=""
+    fi
+    if [ "$rollback_failed" -eq 0 ]; then
+      printf '! 설치 실패로 기존 runtime·hook·skill 연결을 복원했습니다.\n' >&2
+    else
+      printf '✗ 설치 rollback 일부가 실패했습니다. install-state를 보존했으니 setup.sh를 다시 실행하세요.\n' >&2
+    fi
+  fi
+
+  if [ -n "$stage" ] && [ -d "$stage" ]; then
+    case "$stage" in
+      "$STATE_DIR"/.runtime-stage.*) rm -rf -- "$stage" ;;
+    esac
+  fi
+  if [ -n "$runtime_old" ] && [ -d "$runtime_old" ]; then
+    case "$runtime_old" in
+      "$STATE_DIR"/.runtime-old.*) rm -rf -- "$runtime_old" ;;
+    esac
+  fi
+  for snapshot in "$claude_snapshot" "$codex_snapshot"; do
+    if [ -n "$snapshot" ] && [ -f "$snapshot" ]; then
+      case "$snapshot" in
+        "$STATE_DIR"/.hook-snapshot.*) rm -f -- "$snapshot" ;;
+      esac
+    fi
+  done
+  return "$status"
+}
+trap cleanup EXIT
+
+fail() {
+  printf '✗ %s\n' "$*" >&2
+  return 1
+}
+
+case "$USER_HOME" in
+  /*) ;;
+  *) fail "AI_SESSION_KIT_USER_HOME은 절대경로여야 합니다"; exit 1 ;;
+esac
+case "$USER_HOME" in
+  *$'\n'*|*$'\r'*|*$'\t'*|*'`'*) fail "AI_SESSION_KIT_USER_HOME에 제어문자나 backtick을 사용할 수 없습니다"; exit 1 ;;
+esac
 case "$VAULT" in
   /*) ;;
-  *) echo "✗ vault 경로는 절대경로로 지정하세요 (예: bash setup.sh \$HOME/my-vault)"; exit 1 ;;
+  *) fail "vault 경로는 절대경로로 지정하세요 (예: bash setup.sh \"\$HOME/my vault\")"; exit 1 ;;
 esac
 case "$VAULT" in
-  *[\ \"\'\|]*) echo "✗ vault 경로에 공백이나 특수문자를 쓰지 마세요: $VAULT"; exit 1 ;;
+  *$'\n'*|*$'\r'*|*$'\t'*|*'`'*) fail "vault 경로에 제어문자나 backtick을 사용할 수 없습니다"; exit 1 ;;
+  /) fail "파일시스템 루트는 vault로 사용할 수 없습니다"; exit 1 ;;
 esac
 
-# BSD(macOS) / GNU sed 구분
-if sed --version >/dev/null 2>&1; then SED_I=(sed -i); else SED_I=(sed -i ''); fi
-
-echo "지식 vault: $VAULT"
-
-# 1) vault 생성
-if [ -d "$VAULT" ]; then
-  echo "· vault 폴더가 이미 있습니다 — 기존 내용은 건드리지 않습니다"
-else
-  mkdir -p "$VAULT"
-  cp -R "$KIT/vault-template/." "$VAULT/"
-  echo "✓ vault 생성"
+if [ -L "$STATE_DIR" ] || { [ -e "$STATE_DIR" ] && [ ! -d "$STATE_DIR" ]; }; then
+  fail "로컬 설치 상태 경로가 안전한 폴더가 아닙니다: $STATE_DIR"
+  exit 1
 fi
+mkdir -p "$STATE_DIR"
+chmod 700 "$STATE_DIR"
 
-# 2) 스킬·훅·스크립트를 vault/_kit/ 로 복사 (킷 폴더를 나중에 지워도 동작하도록)
-#    로컬에서 수정한 파일이 있으면 .bak-{시각} 으로 백업한 뒤 킷 버전으로 교체한다.
-backup_count=0
-install_file() {
-  local src="$1" dst="$2"
-  mkdir -p "$(dirname "$dst")"
-  if [ -f "$dst" ] && ! cmp -s "$src" "$dst"; then
-    cp "$dst" "$dst.bak-$ts"
-    backup_count=$((backup_count + 1))
-  fi
-  cp "$src" "$dst"
-}
-
-install_file "$KIT/hooks/session-context.sh" "$VAULT/_kit/hooks/session-context.sh"
-install_file "$KIT/hooks/check-pii.sh" "$VAULT/_kit/hooks/check-pii.sh"
-chmod +x "$VAULT/_kit/hooks/"*.sh
-install_file "$KIT/scripts/kb_lint.py" "$VAULT/_kit/scripts/kb_lint.py"
-
-# 스킬은 staging에서 vault 경로 치환까지 마친 뒤 설치 (재실행 시 불필요한 백업 방지)
-stage="$(mktemp -d)"
-for name in "${SKILLS[@]}"; do
-  mkdir -p "$stage/$name"
-  cp -R "$KIT/skills/$name/." "$stage/$name/"
-  if [ "$VAULT" != "$HOME/KnowledgeBase" ]; then
-    "${SED_I[@]}" "s|~/KnowledgeBase|$VAULT|g" "$stage/$name/SKILL.md"
-  fi
-  while IFS= read -r rel; do
-    rel="${rel#./}"
-    install_file "$stage/$name/$rel" "$VAULT/_kit/skills/$name/$rel"
-  done < <(cd "$stage/$name" && find . -type f)
-done
-rm -rf "$stage"
-
-echo "✓ 스킬 ${#SKILLS[@]}개 + 훅 2개 + lint 스크립트 → $VAULT/_kit/"
-if [ "$backup_count" -gt 0 ]; then
-  echo "· 로컬에서 수정했던 파일 ${backup_count}개를 .bak-$ts 로 백업한 뒤 킷 버전으로 교체했습니다"
-  echo "  (수정 내용을 유지하려면 백업 파일과 비교해 다시 반영하세요)"
-fi
-
-# 3) 스킬 연결 — Claude(~/.claude/skills)와 Codex(~/.agents/skills) 양쪽
-mkdir -p "$CLAUDE_DIR/skills"
-for name in "${SKILLS[@]}"; do
-  target="$CLAUDE_DIR/skills/$name"
-  if [ -e "$target" ] && [ ! -L "$target" ]; then
-    echo "✗ $target 가 이미 실제 폴더/파일로 존재합니다. 내용 확인·백업 후 제거하고 다시 실행하세요."
+OLD_VAULT=""
+PREVIOUS_SESSION_COMMAND=""
+PREVIOUS_PII_COMMAND=""
+if [ -e "$STATE_FILE" ] || [ -L "$STATE_FILE" ]; then
+  if [ ! -f "$STATE_FILE" ] || [ -L "$STATE_FILE" ]; then
+    fail "설치 상태 파일이 손상되었습니다: $STATE_FILE"
     exit 1
   fi
-  ln -sfn "$VAULT/_kit/skills/$name" "$target"
-done
-echo "✓ Claude 스킬 연결 (~/.claude/skills/)"
-
-AGENT_SKILLS="$HOME/.agents/skills"
-mkdir -p "$AGENT_SKILLS"
-codex_linked=0
-codex_skipped=0
-for name in "${SKILLS[@]}"; do
-  target="$AGENT_SKILLS/$name"
-  if [ -e "$target" ] && [ ! -L "$target" ]; then
-    codex_skipped=$((codex_skipped + 1))
-    continue
+  state_marker=""
+  IFS= read -r state_marker < "$STATE_FILE" || true
+  OLD_VAULT="$(sed -n '2p' "$STATE_FILE")"
+  PREVIOUS_SESSION_COMMAND="$(sed -n '3p' "$STATE_FILE")"
+  PREVIOUS_PII_COMMAND="$(sed -n '4p' "$STATE_FILE")"
+  if { [ "$state_marker" != "$STATE_MARKER" ] && [ "$state_marker" != "$LEGACY_STATE_MARKER" ]; } || [ -z "$OLD_VAULT" ]; then
+    fail "설치 상태 파일 형식을 확인할 수 없습니다: $STATE_FILE"
+    exit 1
   fi
-  ln -sfn "$VAULT/_kit/skills/$name" "$target"
-  codex_linked=$((codex_linked + 1))
-done
-echo "✓ Codex 스킬 연결 (~/.agents/skills/, ${codex_linked}개 연결·${codex_skipped}개 기존 보존)"
+  if [ "$state_marker" = "$STATE_MARKER" ] &&
+    { [ -z "$PREVIOUS_SESSION_COMMAND" ] || [ -z "$PREVIOUS_PII_COMMAND" ]; }; then
+    fail "설치 상태에 exact hook command가 없습니다: $STATE_FILE"
+    exit 1
+  fi
+  case "$OLD_VAULT" in
+    /*) ;;
+    *) fail "설치 상태의 vault 경로가 유효하지 않습니다: $STATE_FILE"; exit 1 ;;
+  esac
+fi
 
-# 4) settings.json 에 훅 등록 (SessionStart: 컨텍스트 주입, PostToolUse: 민감정보 스캔)
-HOOK_CMD="$VAULT/_kit/hooks/session-context.sh"
-PII_CMD="$VAULT/_kit/hooks/check-pii.sh"
+discover_legacy_vault() {
+  local name target actual suffix prefix candidate=""
 
-manual_notice() {
-  echo ""
-  echo "  수동 등록 방법:"
-  echo "  1) $KIT/settings-snippet.json 을 열어 placeholder 를 아래 경로로 바꾼다"
-  echo "       __HOOK_PATH__     → $HOOK_CMD"
-  echo "       __PII_HOOK_PATH__ → $PII_CMD"
-  echo "  2) 그 내용을 $SETTINGS 의 hooks 항목에 합친다"
-  echo "  (Claude Code에게 두 파일을 보여주고 \"합쳐줘\"라고 해도 된다)"
-}
-
-if [ ! -f "$SETTINGS" ]; then
-  mkdir -p "$CLAUDE_DIR"
-  cat > "$SETTINGS" <<EOF
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "startup|clear",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$HOOK_CMD",
-            "timeout": 10,
-            "statusMessage": "지식베이스 컨텍스트 로딩..."
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Write|Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$PII_CMD",
-            "timeout": 10
-          }
-        ]
-      }
-    ]
-  }
-}
-EOF
-  echo "✓ settings.json 생성 + 훅 2개 등록"
-elif command -v jq >/dev/null 2>&1; then
-  settings_backed_up=0
-  backup_settings() {
-    if [ "$settings_backed_up" -eq 0 ]; then
-      cp "$SETTINGS" "$SETTINGS.bak-$ts"
-      settings_backed_up=1
+  for name in "${SKILLS[@]}"; do
+    target="$CLAUDE_DIR/skills/$name"
+    [ -L "$target" ] || return 1
+    actual="$(readlink "$target")"
+    suffix="/_kit/skills/$name"
+    case "$actual" in
+      /*"$suffix") prefix="${actual%"$suffix"}" ;;
+      *) return 1 ;;
+    esac
+    [ -n "$prefix" ] || return 1
+    if [ -z "$candidate" ]; then
+      candidate="$prefix"
+    elif [ "$candidate" != "$prefix" ]; then
+      return 1
     fi
-  }
-  # SessionStart: 다른 훅이 이미 있으면 건드리지 않음 (보수적)
-  if grep -q "session-context.sh" "$SETTINGS" 2>/dev/null; then
-    echo "· SessionStart 훅이 이미 등록되어 있습니다"
-  elif jq -e '.hooks.SessionStart' "$SETTINGS" >/dev/null 2>&1; then
-    echo "! settings.json 에 다른 SessionStart 훅이 이미 있습니다 — 자동 병합하지 않습니다."
-    manual_notice
-  else
-    backup_settings
-    tmp="$(mktemp)"
-    jq --arg cmd "$HOOK_CMD" \
-      '.hooks = (.hooks // {}) + {SessionStart: [{matcher: "startup|clear", hooks: [{type: "command", command: $cmd, timeout: 10, statusMessage: "지식베이스 컨텍스트 로딩..."}]}]}' \
-      "$SETTINGS" > "$tmp"
-    mv "$tmp" "$SETTINGS"
-    echo "✓ SessionStart 훅 등록"
+  done
+
+  if { [ -f "$candidate/_kit/hooks/session-context.sh" ] && [ -f "$candidate/_kit/hooks/check-pii.sh" ]; } ||
+    { [ -f "$VAULT/_kit/hooks/session-context.sh" ] && [ -f "$VAULT/_kit/hooks/check-pii.sh" ]; }; then
+    printf '%s' "$candidate"
+    return 0
   fi
-  # PostToolUse: 배열이라 기존 항목 뒤에 append 가능
-  if grep -q "check-pii.sh" "$SETTINGS" 2>/dev/null; then
-    echo "· 민감정보 스캔 훅이 이미 등록되어 있습니다"
-  else
-    backup_settings
-    tmp="$(mktemp)"
-    jq --arg cmd "$PII_CMD" \
-      '.hooks = (.hooks // {}) | .hooks.PostToolUse = ((.hooks.PostToolUse // []) + [{matcher: "Write|Edit", hooks: [{type: "command", command: $cmd, timeout: 10}]}])' \
-      "$SETTINGS" > "$tmp"
-    mv "$tmp" "$SETTINGS"
-    echo "✓ 민감정보 스캔 훅 등록"
+  return 1
+}
+
+if [ -z "$OLD_VAULT" ]; then
+  if legacy_vault="$(discover_legacy_vault)"; then
+    OLD_VAULT="$legacy_vault"
+    printf '· state 도입 전 legacy install 감지: %s\n' "$OLD_VAULT"
   fi
-  if [ "$settings_backed_up" -eq 1 ]; then
-    echo "· 기존 설정은 settings.json.bak-$ts 로 백업되어 있습니다"
-  fi
-else
-  echo "! jq 가 없어 기존 settings.json 에 자동 병합할 수 없습니다."
-  manual_notice
 fi
 
-# 5) 검증
-fail=0
-for name in "${SKILLS[@]}"; do
-  p="$CLAUDE_DIR/skills/$name"
-  if [ -e "$p" ]; then
-    echo "✓ $p → $(readlink "$p")"
+validate_vault_template() {
+  local rel dst
+
+  if [ -e "$VAULT" ] || [ -L "$VAULT" ]; then
+    if [ ! -d "$VAULT" ]; then
+      fail "vault 경로가 폴더가 아닙니다: $VAULT"
+      return 1
+    fi
+  fi
+  while IFS= read -r -d '' rel; do
+    rel="${rel#./}"
+    dst="$VAULT/$rel"
+    if [ -L "$dst" ]; then
+      fail "필수 vault 폴더가 symlink라서 중단합니다: $dst"
+      return 1
+    fi
+    if [ -e "$dst" ] && [ ! -d "$dst" ]; then
+      fail "필수 vault 폴더 자리에 다른 파일이 있습니다: $dst"
+      return 1
+    fi
+  done < <(cd "$KIT/vault-template" && find . -type d -print0)
+  while IFS= read -r -d '' rel; do
+    rel="${rel#./}"
+    dst="$VAULT/$rel"
+    if [ -L "$dst" ]; then
+      fail "필수 vault 파일이 symlink라서 중단합니다: $dst"
+      return 1
+    fi
+    if [ -e "$dst" ] && [ ! -f "$dst" ]; then
+      fail "필수 vault 파일 자리에 다른 항목이 있습니다: $dst"
+      return 1
+    fi
+  done < <(cd "$KIT/vault-template" && find . -type f -print0)
+}
+
+backup_file() {
+  local source="$1" backup
+
+  backup="$(mktemp "$source.bak-$ts.XXXXXX")"
+  cp -p "$source" "$backup"
+  printf '%s' "$backup"
+}
+
+migrate_entrypoints() {
+  local name destination legacy current backup
+
+  legacy="$KIT/legacy-vault-entrypoint-v0.md"
+  [ -f "$legacy" ] || return 0
+  for name in CLAUDE.md AGENTS.md; do
+    destination="$VAULT/$name"
+    current="$KIT/vault-template/$name"
+    [ -f "$destination" ] || continue
+    if cmp -s "$destination" "$legacy"; then
+      backup="$(backup_file "$destination")"
+      cp "$current" "$destination"
+      printf '✓ 구버전 기본 %s를 갱신했습니다 (백업: %s)\n' "$name" "$backup"
+    elif ! cmp -s "$destination" "$current" && grep -Fq 'vault 전체 grep' "$destination"; then
+      printf '! 사용자 수정 %s에 구버전 전체 검색 규칙이 남아 있습니다. 90.private와 _kit 제외 여부를 직접 확인하세요: %s\n' "$name" "$destination" >&2
+    fi
+  done
+}
+
+merge_vault_template() {
+  local rel src dst merged=0
+
+  mkdir -p "$VAULT"
+  while IFS= read -r -d '' rel; do
+    rel="${rel#./}"
+    mkdir -p "$VAULT/$rel"
+  done < <(cd "$KIT/vault-template" && find . -type d -print0)
+  while IFS= read -r -d '' rel; do
+    rel="${rel#./}"
+    src="$KIT/vault-template/$rel"
+    dst="$VAULT/$rel"
+    if [ ! -e "$dst" ] && [ ! -L "$dst" ]; then
+      cp "$src" "$dst"
+      merged=$((merged + 1))
+    fi
+  done < <(cd "$KIT/vault-template" && find . -type f -print0)
+  printf '✓ vault 기본 구조 확인 (누락 파일 %s개 추가, 기존 내용 보존)\n' "$merged"
+}
+
+validate_vault_template
+migrate_entrypoints
+merge_vault_template
+VAULT="$(cd "$VAULT" && pwd -P)"
+validate_vault_template
+printf '지식 vault: %s\n' "$VAULT"
+
+shell_quote() {
+  local escaped
+  escaped="$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+  printf "'%s'" "$escaped"
+}
+
+validate_hook_config() {
+  jq -e '
+    def valid_event($name):
+      (.hooks[$name] == null) or
+      ((.hooks[$name] | type) == "array" and
+       all(.hooks[$name][];
+         (type == "object") and
+         ((.hooks | type) == "array") and
+         all(.hooks[];
+           (type == "object") and
+           ((.command == null) or ((.command | type) == "string")))));
+    (type == "object") and
+    (((.hooks // {}) | type) == "object") and
+    valid_event("SessionStart") and
+    valid_event("PreToolUse") and
+    valid_event("PostToolUse")
+  ' "$1" >/dev/null 2>&1
+}
+
+snapshot_hook_config() {
+  local file="$1" snapshot_name="$2" had_name="$3" snapshot
+
+  if [ -f "$file" ]; then
+    snapshot="$(mktemp "$STATE_DIR/.hook-snapshot.XXXXXX")"
+    cp -p "$file" "$snapshot"
+    printf -v "$snapshot_name" '%s' "$snapshot"
+    printf -v "$had_name" '%s' 1
   else
-    echo "✗ DANGLING: $p"
-    fail=1
+    printf -v "$snapshot_name" '%s' ''
+    printf -v "$had_name" '%s' 0
+  fi
+}
+
+assert_runtime_replaceable() {
+  if [ ! -e "$RUNTIME_DIR" ] && [ ! -L "$RUNTIME_DIR" ]; then
+    return 0
+  fi
+  if [ -L "$RUNTIME_DIR" ] || [ ! -d "$RUNTIME_DIR" ]; then
+    fail "로컬 runtime이 안전한 폴더가 아닙니다: $RUNTIME_DIR"
+    return 1
+  fi
+  if [ -L "$RUNTIME_DIR/$RUNTIME_MARKER" ] || [ ! -f "$RUNTIME_DIR/$RUNTIME_MARKER" ] ||
+    [ "$(cat "$RUNTIME_DIR/$RUNTIME_MARKER")" != "$RUNTIME_MARKER_CONTENT" ]; then
+    fail "installer 소유 marker가 없는 runtime을 보존했습니다: $RUNTIME_DIR"
+    return 1
+  fi
+}
+
+preflight_skill_links() {
+  local root name target actual current_expected old_expected
+  local has_conflict=0
+
+  for root in "${SKILL_ROOTS[@]}"; do
+    for name in "${SKILLS[@]}"; do
+      target="$root/$name"
+      current_expected="$RUNTIME_DIR/skills/$name"
+      old_expected=""
+      if [ -n "$OLD_VAULT" ]; then
+        old_expected="$OLD_VAULT/_kit/skills/$name"
+      fi
+      if [ -L "$target" ]; then
+        actual="$(readlink "$target")"
+        if [ "$actual" != "$current_expected" ] && { [ -z "$old_expected" ] || [ "$actual" != "$old_expected" ]; }; then
+          printf '✗ unrelated symlink 보존: %s → %s\n' "$target" "$actual" >&2
+          has_conflict=1
+        fi
+      elif [ -e "$target" ]; then
+        printf '✗ 기존 파일/폴더 보존: %s\n' "$target" >&2
+        has_conflict=1
+      fi
+    done
+  done
+  return "$has_conflict"
+}
+
+if ! preflight_skill_links; then
+  fail "기존 skill 항목과 충돌하여 symlink 설치를 중단했습니다"
+  exit 1
+fi
+
+assert_runtime_replaceable
+if ! command -v jq >/dev/null 2>&1; then
+  printf '✗ jq가 없어 JSON hook 설정과 pre-write PII guard를 안전하게 활성화할 수 없습니다\n' >&2
+  printf '  jq를 설치한 뒤 같은 setup.sh 명령을 다시 실행하세요. 기존 runtime·hook·skill 연결은 변경하지 않았습니다.\n' >&2
+  exit 1
+fi
+for hook_file in "$CLAUDE_SETTINGS" "$CODEX_HOOKS"; do
+  if { [ -e "$hook_file" ] || [ -L "$hook_file" ]; } &&
+    { [ ! -f "$hook_file" ] || [ -L "$hook_file" ] || ! validate_hook_config "$hook_file"; }; then
+    printf '✗ 유효한 JSON hook 설정이 아니어서 보존했습니다: %s\n' "$hook_file" >&2
+    printf '  JSON을 고친 뒤 setup.sh를 다시 실행하세요. 기존 runtime·hook·skill 연결은 변경하지 않았습니다.\n' >&2
+    exit 1
   fi
 done
-out="$("$VAULT/_kit/hooks/session-context.sh" 2>/dev/null || true)"
-if [ -n "$out" ]; then
-  echo "✓ 훅 스모크 테스트 통과"
-else
-  echo "✗ 훅이 아무것도 출력하지 않았습니다 — bash $VAULT/_kit/hooks/session-context.sh 로 직접 확인하세요"
-  fail=1
+
+snapshot_hook_config "$CLAUDE_SETTINGS" claude_snapshot claude_had_config
+snapshot_hook_config "$CODEX_HOOKS" codex_snapshot codex_had_config
+snapshot_index=0
+for root in "${SKILL_ROOTS[@]}"; do
+  for name in "${SKILLS[@]}"; do
+    target="$root/$name"
+    if [ -L "$target" ]; then
+      skill_before_exists[$snapshot_index]=1
+      skill_before_target[$snapshot_index]="$(readlink "$target")"
+    else
+      skill_before_exists[$snapshot_index]=0
+      skill_before_target[$snapshot_index]=""
+    fi
+    snapshot_index=$((snapshot_index + 1))
+  done
+done
+skill_snapshot_ready=1
+
+stage="$(mktemp -d "$STATE_DIR/.runtime-stage.XXXXXX")"
+mkdir -p "$stage/hooks" "$stage/scripts" "$stage/skills"
+cp "$KIT/hooks/session-context.sh" "$stage/hooks/session-context.sh"
+cp "$KIT/hooks/check-pii.sh" "$stage/hooks/check-pii.sh"
+cp "$KIT/scripts/kb_lint.py" "$stage/scripts/kb_lint.py"
+chmod 700 "$stage/hooks/session-context.sh" "$stage/hooks/check-pii.sh"
+
+escaped_vault="$(printf '%s' "$VAULT" | sed 's/[\\&|]/\\&/g')"
+lint_command="AI_SESSION_KIT_STATE_DIR=$(shell_quote "$STATE_DIR") python3 $(shell_quote "$RUNTIME_DIR/scripts/kb_lint.py") $(shell_quote "$VAULT") --check"
+escaped_lint_command="$(printf '%s' "$lint_command" | sed 's/[\\&|]/\\&/g')"
+for name in "${SKILLS[@]}"; do
+  mkdir -p "$stage/skills/$name"
+  cp -R "$KIT/skills/$name/." "$stage/skills/$name/"
+  rewrite_tmp="$(mktemp "$stage/.rewrite.XXXXXX")"
+  sed \
+    -e "s|~/KnowledgeBase|$escaped_vault|g" \
+    -e "s|__KB_LINT_COMMAND__|$escaped_lint_command|g" \
+    "$stage/skills/$name/SKILL.md" > "$rewrite_tmp"
+  mv "$rewrite_tmp" "$stage/skills/$name/SKILL.md"
+done
+printf '%s\n' "$RUNTIME_MARKER_CONTENT" > "$stage/$RUNTIME_MARKER"
+
+if [ -d "$RUNTIME_DIR" ]; then
+  runtime_old="$(mktemp -d "$STATE_DIR/.runtime-old.XXXXXX")"
+  rmdir "$runtime_old"
+  mv "$RUNTIME_DIR" "$runtime_old"
 fi
-if command -v python3 >/dev/null 2>&1; then
-  if python3 "$VAULT/_kit/scripts/kb_lint.py" "$VAULT" --check >/dev/null 2>&1; then
-    echo "✓ lint 스모크 테스트 통과 (vault 위생 정상)"
+if mv "$stage" "$RUNTIME_DIR"; then
+  stage=""
+  runtime_swapped=1
+else
+  if [ -n "$runtime_old" ] && [ ! -e "$RUNTIME_DIR" ]; then
+    mv "$runtime_old" "$RUNTIME_DIR"
+    runtime_old=""
+  fi
+  fail "로컬 runtime 교체에 실패했습니다"
+  exit 1
+fi
+printf '✓ 스킬 %s개 + 훅 2개 + lint 스크립트 → %s\n' "${#SKILLS[@]}" "$RUNTIME_DIR"
+
+HOOK_CMD="$RUNTIME_DIR/hooks/session-context.sh"
+PII_CMD="$RUNTIME_DIR/hooks/check-pii.sh"
+SESSION_HOOK_COMMAND="$SESSION_HOOK_MARKER KB_VAULT=$(shell_quote "$VAULT") AI_SESSION_KIT_STATE_DIR=$(shell_quote "$STATE_DIR") bash $(shell_quote "$HOOK_CMD")"
+PII_HOOK_COMMAND="$PII_HOOK_MARKER KB_VAULT=$(shell_quote "$VAULT") AI_SESSION_KIT_STATE_DIR=$(shell_quote "$STATE_DIR") bash $(shell_quote "$PII_CMD")"
+OLD_HOOK_CMD=""
+OLD_PII_CMD=""
+LEGACY_SESSION_COMMAND=""
+LEGACY_PII_COMMAND=""
+if [ -n "$OLD_VAULT" ]; then
+  OLD_HOOK_CMD="$OLD_VAULT/_kit/hooks/session-context.sh"
+  OLD_PII_CMD="$OLD_VAULT/_kit/hooks/check-pii.sh"
+  LEGACY_SESSION_COMMAND="$SESSION_HOOK_MARKER bash $(shell_quote "$OLD_HOOK_CMD")"
+  LEGACY_PII_COMMAND="$PII_HOOK_MARKER bash $(shell_quote "$OLD_PII_CMD")"
+fi
+
+configure_hooks() {
+  local file="$1" session_matcher="$2" pii_matcher="$3" tmp input_mode
+  local filter
+  local -a jq_args
+
+  if ! mkdir -p "$(dirname "$file")"; then
+    fail "hook 설정 폴더를 준비할 수 없습니다: $(dirname "$file")"
+    return 1
+  fi
+  if [ -e "$file" ] || [ -L "$file" ]; then
+    if [ ! -f "$file" ] || [ -L "$file" ] || ! validate_hook_config "$file"; then
+      fail "유효한 JSON hook 설정이 아니어서 보존했습니다: $file"
+      return 1
+    fi
+    input_mode=file
   else
-    echo "· lint가 문제를 발견했습니다 — python3 $VAULT/_kit/scripts/kb_lint.py 로 상세 확인"
+    input_mode=null
+  fi
+
+  if ! tmp="$(mktemp "$(dirname "$file")/.hooks.XXXXXX")"; then
+    fail "hook 설정 임시 파일을 만들 수 없습니다: $(dirname "$file")"
+    return 1
+  fi
+  filter='
+    def without_owned($owned):
+      map(
+        . as $group |
+        (($group.hooks // []) |
+          map(. as $hook | select(($owned | index($hook.command // "")) == null))) as $remaining |
+        if ($remaining | length) == (($group.hooks // []) | length) then $group
+        elif ($remaining | length) > 0 then ($group | .hooks = $remaining)
+        else empty
+        end
+      );
+    . = (. // {}) |
+    .hooks = (.hooks // {}) |
+    ([$sessionCommand, $previousSession, $legacySession, $legacySessionBare] |
+      map(select(length > 0)) | unique) as $ownedSession |
+    ([$piiCommand, $previousPii, $legacyPii, $legacyPiiBare] |
+      map(select(length > 0)) | unique) as $ownedPii |
+    .hooks.SessionStart =
+      (((.hooks.SessionStart // []) | without_owned($ownedSession)) + [{
+        matcher: $sessionMatcher,
+        hooks: [{type: "command", command: $sessionCommand, timeout: 10, statusMessage: "지식베이스 컨텍스트 로딩..."}]
+      }]) |
+    .hooks.PreToolUse =
+      (((.hooks.PreToolUse // []) | without_owned($ownedPii)) + [{
+        matcher: $piiMatcher,
+        hooks: [{type: "command", command: $piiCommand, timeout: 10}]
+      }]) |
+    if .hooks.PostToolUse == null then .
+    else .hooks.PostToolUse |= without_owned($ownedPii)
+    end
+  '
+  jq_args=(
+    --arg sessionCommand "$SESSION_HOOK_COMMAND"
+    --arg piiCommand "$PII_HOOK_COMMAND"
+    --arg previousSession "$PREVIOUS_SESSION_COMMAND"
+    --arg previousPii "$PREVIOUS_PII_COMMAND"
+    --arg legacySession "$LEGACY_SESSION_COMMAND"
+    --arg legacyPii "$LEGACY_PII_COMMAND"
+    --arg legacySessionBare "$OLD_HOOK_CMD"
+    --arg legacyPiiBare "$OLD_PII_CMD"
+    --arg sessionMatcher "$session_matcher"
+    --arg piiMatcher "$pii_matcher"
+  )
+  if [ "$input_mode" = file ]; then
+    if ! jq "${jq_args[@]}" "$filter" "$file" > "$tmp"; then
+      rm "$tmp"
+      fail "hook 설정 병합에 실패해 원본을 보존했습니다: $file"
+      return 1
+    fi
+  else
+    if ! jq -n "${jq_args[@]}" "$filter" > "$tmp"; then
+      rm "$tmp"
+      fail "hook 설정 생성에 실패했습니다: $file"
+      return 1
+    fi
+  fi
+
+  if [ -f "$file" ] && cmp -s "$file" "$tmp"; then
+    rm -f -- "$tmp"
+  else
+    if [ -f "$file" ]; then
+      if ! backup_file "$file" >/dev/null; then
+        rm -f -- "$tmp"
+        fail "hook 설정 backup을 만들 수 없어 원본을 보존했습니다: $file"
+        return 1
+      fi
+    elif ! chmod 600 "$tmp"; then
+      rm -f -- "$tmp"
+      fail "새 hook 설정 권한을 지정할 수 없습니다: $file"
+      return 1
+    fi
+    if ! mv "$tmp" "$file"; then
+      rm -f -- "$tmp"
+      fail "hook 설정을 교체할 수 없어 원본을 보존했습니다: $file"
+      return 1
+    fi
+  fi
+}
+
+verify_hook_config() {
+  local file="$1"
+  jq -e --arg sessionCommand "$SESSION_HOOK_COMMAND" --arg piiCommand "$PII_HOOK_COMMAND" '
+    ([.hooks.SessionStart[]?.hooks[]?.command? | select(. == $sessionCommand)] | length) == 1 and
+    ([.hooks.PreToolUse[]?.hooks[]?.command? | select(. == $piiCommand)] | length) == 1 and
+    ([.hooks.PostToolUse[]?.hooks[]?.command? | select(. == $piiCommand)] | length) == 0
+  ' "$file" >/dev/null 2>&1
+}
+
+result=0
+if configure_hooks "$CLAUDE_SETTINGS" 'startup|resume|clear|compact' 'Write|Edit'; then
+  if verify_hook_config "$CLAUDE_SETTINGS"; then
+    printf '✓ Claude SessionStart + PreToolUse hook 등록·검증 완료\n'
+  else
+    fail "Claude hook 검증 실패: $CLAUDE_SETTINGS"
+    result=1
   fi
 else
-  echo "· python3 없음 — lint 검증 생략 (세션 기록·복원은 정상 동작)"
+  result=1
+fi
+if [ "$result" -eq 0 ] && configure_hooks "$CODEX_HOOKS" 'startup|resume|clear|compact' 'apply_patch|Edit|Write'; then
+  if verify_hook_config "$CODEX_HOOKS"; then
+    printf '✓ Codex SessionStart + PreToolUse hook 등록·검증 완료\n'
+  else
+    fail "Codex hook 검증 실패: $CODEX_HOOKS"
+    result=1
+  fi
+elif [ "$result" -eq 0 ]; then
+  result=1
+fi
+
+if [ "$result" -ne 0 ]; then
+  printf '! hook 설정이 완료되지 않아 skill symlink와 install-state는 변경하지 않았습니다. 문제를 해결한 뒤 setup.sh를 다시 실행하세요.\n' >&2
+  exit "$result"
+fi
+
+for root in "${SKILL_ROOTS[@]}"; do
+  mkdir -p "$root"
+  for name in "${SKILLS[@]}"; do
+    target="$root/$name"
+    expected="$RUNTIME_DIR/skills/$name"
+    if [ -L "$target" ] && [ "$(readlink "$target")" != "$expected" ]; then
+      rm "$target"
+    fi
+    if [ ! -L "$target" ]; then
+      ln -s "$expected" "$target"
+    fi
+  done
+done
+
+for root in "${SKILL_ROOTS[@]}"; do
+  for name in "${SKILLS[@]}"; do
+    target="$root/$name"
+    expected="$RUNTIME_DIR/skills/$name"
+    if [ ! -L "$target" ] || [ "$(readlink "$target")" != "$expected" ] || [ ! -e "$target" ]; then
+      fail "skill symlink 검증 실패: $target"
+      exit 1
+    fi
+  done
+done
+printf '✓ Claude + Codex skill symlink 설치·검증 완료\n'
+
+state_tmp="$(mktemp "$STATE_DIR/.install-state.XXXXXX")"
+printf '%s\n%s\n%s\n%s\n' \
+  "$STATE_MARKER" "$VAULT" "$SESSION_HOOK_COMMAND" "$PII_HOOK_COMMAND" > "$state_tmp"
+chmod 600 "$state_tmp"
+mv "$state_tmp" "$STATE_FILE"
+transaction_committed=1
+
+out="$(KB_VAULT="$VAULT" AI_SESSION_KIT_STATE_DIR="$STATE_DIR" "$HOOK_CMD" 2>/dev/null || true)"
+if [ -n "$out" ]; then
+  printf '✓ SessionStart hook 스모크 테스트 통과\n'
+else
+  fail "SessionStart hook이 아무것도 출력하지 않았습니다: $HOOK_CMD"
+  result=1
+fi
+
+if command -v python3 >/dev/null 2>&1; then
+  lint_output=""
+  if lint_output="$(AI_SESSION_KIT_STATE_DIR="$STATE_DIR" python3 "$RUNTIME_DIR/scripts/kb_lint.py" "$VAULT" 2>/dev/null)"; then
+    lint_summary="$(printf '%s\n' "$lint_output" | grep -E '^kb-lint [0-9]{4}-[0-9]{2}-[0-9]{2}: ERR [0-9]+' | tail -1)"
+    if [ -z "$lint_summary" ]; then
+      printf '! 설치는 완료됐지만 lint 결과를 확인하지 못했습니다. python3를 확인한 뒤 session-end skill에서 다시 실행하세요.\n'
+    elif printf '%s\n' "$lint_summary" | grep -Eq ': ERR 0( |$)'; then
+      printf '✓ lint 스모크 테스트 통과 (vault 위생 정상)\n'
+    else
+      lint_count="$(printf '%s\n' "$lint_summary" | sed -n 's/.*: ERR \([0-9][0-9]*\).*/\1/p')"
+      printf '! 설치는 완료됐지만 vault 정리 %s건이 남아 있습니다. 세션 종료 시 session-end skill이 lint 상세를 확인하고 정리합니다.\n' "${lint_count:-여러}"
+    fi
+  else
+    printf '! 설치는 완료됐지만 lint 검증을 실행하지 못했습니다. python3를 확인한 뒤 session-end skill에서 다시 실행하세요.\n'
+  fi
+else
+  printf '· python3 없음 — lint 검증 생략 (세션 기록·복원은 정상 동작)\n'
 fi
 
 cat <<'DONE'
 
-설치 완료. 다음 단계:
-- 세션을 마칠 때 "세션 종료해줘"라고 하면 오늘 작업이 vault에 기록됩니다
-- 다음 세션에서 "이어서 하자"라고 하면 기록을 읽고 컨텍스트를 복원합니다
-- Claude: 새 세션을 열면 진행 중 작업 목록이 자동으로 로드됩니다 (처음엔 "(없음)"이 정상)
-- Codex: 자동 로드가 없으므로 세션을 시작할 때 "이어서 하자"라고 직접 말하면 됩니다
+설치 후 확인:
+- Claude: 새 세션에서 SessionStart hook이 진행 중 작업을 로드합니다.
+- Codex: /hooks에서 새 command hook 정의를 검토하고 trust해야 실행됩니다. vault를 옮겨 재설치하면 command가 바뀌므로 다시 trust하세요.
+- 세션 기록은 SessionEnd 자동화가 아닙니다. 세션을 마칠 때 "세션 종료해줘"라고 요청해 session-end skill을 실행하세요.
+- 이전 설치의 vault/_kit은 자동 삭제하지 않지만 더 이상 실행하거나 global skill로 연결하지 않습니다.
 DONE
-exit "$fail"
+exit "$result"

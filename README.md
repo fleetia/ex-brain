@@ -1,8 +1,8 @@
-# exterior
+# ex-brain
 
-『익스테리어』. 13번째 이후의 임의역류개시.
+비개발자와 디자이너도 로컬 폴더에 AI 작업 기록과 재사용 지식을 쌓을 수 있게 만드는 `ai-session-kit`의 원본 저장소입니다.
 
-## ai-session-kit (원본 저장소)
+## ai-session-kit 원본 저장소
 
 AI 세션 기록 킷의 **단일 원본**입니다. 이 폴더를 직접 배포하지 말고, build.sh로 만든 산출물을 배포합니다.
 
@@ -11,7 +11,8 @@ AI 세션 기록 킷의 **단일 원본**입니다. 이 폴더를 직접 배포�
 - `skills/` `hooks/` `scripts/` `vault-template/` `setup.sh` `uninstall.sh` — 킷 본체 (두 배포판 공통)
 - `readmes/README-cli.md` — 터미널·Claude Code 사용자용 안내
 - `readmes/README-app.md` — Claude/Codex 앱 사용자용 안내 (일반인)
-- `build.sh` — `cli/`, `app/` 산출물 생성 (README만 다르고 코드는 동일)
+- `build.sh` — `dist/cli`, `dist/app` 산출물 생성 (README만 다르고 코드는 동일)
+- `tests/` — vault 규칙과 실제 release artifact 검증
 
 ## 배포 절차 (CI 자동)
 
@@ -27,9 +28,12 @@ AI 세션 기록 킷의 **단일 원본**입니다. 이 폴더를 직접 배포�
 로컬에서 확인용 빌드는 여전히 가능하다:
 
 ```bash
-bash build.sh          # 상위 폴더(exterior/)에 cli/, app/ 생성
-bash build.sh dist     # 원하는 출력 폴더 지정
+bash build.sh              # 저장소 안 dist/에 cli/, app/ 생성
+bash build.sh /tmp/output  # 원하는 출력 폴더 지정
+bash tests/check-release.sh
 ```
+
+`build.sh`는 자신이 만든 marker가 있는 `cli/`, `app/`만 교체합니다. 같은 이름의 일반 폴더나 symlink가 있으면 내용을 건드리지 않고 실패합니다.
 
 ## 수정 규칙
 

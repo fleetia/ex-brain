@@ -1,6 +1,6 @@
 ---
 name: kb-routing
-description: 지식 vault(~/KnowledgeBase)에 Markdown 문서를 생성·이동·정리·폐기할 때 존 라우팅, frontmatter, INDEX 갱신 규칙을 적용한다.
+description: 설정된 지식 vault에 Markdown 문서를 생성·이동·정리·폐기할 때 존 라우팅, frontmatter, INDEX 갱신 규칙을 적용한다.
 ---
 
 # 지식 라우팅
@@ -11,8 +11,8 @@ description: 지식 vault(~/KnowledgeBase)에 Markdown 문서를 생성·이동�
 
 1. **미래의 조회 의도로 분류한다.** "나중에 어떤 질문으로 이 문서를 찾게 될까?"를 기준으로 두지, 만든 날짜나 만든 계기로 분류하지 않는다.
 2. **활성 지식은 정확히 한 곳에만 둔다.** 같은 내용을 두 존에 복사하지 않는다.
-3. **대체된 문서는 지우지 않는다.** frontmatter를 `status: archived`로 바꾸고 문서 상단에 대체 문서 링크를 남긴다. 삭제는 사용자가 명시적으로 요청할 때만.
-4. **이동하면 링크를 고친다.** 파일을 옮기기 전에 vault 전체에서 파일명을 grep해서 이 파일을 가리키는 링크를 먼저 고치고, 해당 존 INDEX를 갱신한다.
+3. **대체된 문서는 지우지 않는다.** frontmatter를 `status: archived`로 바꾸고 문서 상단에 대체 문서 링크를 남긴다. INDEX의 `Archived` 섹션으로 옮기고, 활성 wiki 문서가 이 파일을 가리키던 링크는 대체 문서로 바꿔 현재 지식과 분리한다. 과거 작업 맥락을 보존하는 `00.memory/` 링크는 그대로 둘 수 있다. 삭제는 사용자가 명시적으로 요청할 때만.
+4. **이동하면 링크를 고친다.** 파일을 옮기기 전에 `00.memory/`, `10.notes/`, `20.work/`에서 파일명을 grep해서 이 파일을 가리키는 링크를 먼저 고치고, 해당 존 INDEX를 갱신한다. `90.private/`는 사용자가 명시적으로 요청한 경우에만 확인한다.
 5. **파일명에 사람 이름을 넣지 않는다.** 파일명은 세션 시작 시 자동으로 컨텍스트에 주입된다.
 6. **문서 하나를 추가할 때는 그 존의 INDEX만 갱신한다.** 사용자가 재정비를 요청하지 않는 한 다른 폴더·INDEX를 대량 생성하거나 고치지 않는다.
 
@@ -22,10 +22,10 @@ description: 지식 vault(~/KnowledgeBase)에 Markdown 문서를 생성·이동�
 
 | 존 타입 | 폴더 | 규칙 |
 |---|---|---|
-| wiki | `10.notes/` `20.work/` | INDEX.md 필수, 추가·이동 시마다 갱신. frontmatter 필수. 모든 문서가 INDEX에서 도달 가능해야 함 |
+| wiki | `10.notes/` `20.work/` | INDEX.md 필수, 추가·이동 시마다 갱신. frontmatter 필수. 활성 문서는 `문서`, archived 문서는 `Archived` 섹션에서 도달 가능해야 함 |
 | log | `00.memory/` | 시간순 기록. 날짜 접두 파일명이 곧 인덱스. INDEX 의무 없음, 링크 안 걸린 문서가 정상 |
 | private | `90.private/` | 사용자가 명시적으로 요청하지 않으면 읽지도 인용하지도 않는다 |
-| infra | `_kit/` | 스킬·훅·설정 파일. 지식 라우팅 대상이 아님 |
+| legacy infra | `_kit/` | 구버전 설치 잔여물. 기본 검색·실행·수정 대상이 아니며 지식 라우팅에도 사용하지 않음 |
 
 ## Routing Map
 
@@ -49,8 +49,8 @@ status: active
 ---
 ```
 
-- `status`: `active`(현재 유효) | `archived`(대체됨·더 이상 유효하지 않음)
-- 태스크 파일(`00.memory/tasks/`)은 session-end skill의 별도 스키마(`status: todo | in-progress | done`)를 따른다. 폴더 위치와 status는 일치해야 한다 — `done/` 아래 파일이 `status: in-progress`를 달고 있으면 안 된다.
+- `status`: `active`(현재 유효) | `archived`(대체됨·더 이상 유효하지 않음). `archived`는 기본 조회에서 제외하고 역사 확인 요청에만 사용한다.
+- 태스크 파일(`00.memory/tasks/`)은 session-end skill의 별도 스키마(`status: todo | in-progress | done | cancelled`)를 따른다. `cancelled`는 완료가 아니라 사용자가 중단을 확정한 일이다. 폴더 위치와 status는 일치해야 한다.
 
 ## Link Convention
 

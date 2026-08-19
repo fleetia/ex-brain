@@ -13,7 +13,7 @@ description: 월간 작업 요약 생성. 사용자가 "/monthly-summary", "월�
 
 2. **소스 수집** (우선순위):
    - 1순위: `00.memory/weekly/YYYY-WNN.md` — 해당 월에 포함되는 주간 요약 (이중 압축 방지)
-   - 2순위: 주간 요약이 없는 기간은 `00.memory/tasks/{done,in-progress,todo}/*.md`에서 `work-dates`(없으면 `start`/`end`)가 해당 월과 겹치는 파일로 보충
+   - 2순위: 주간 요약이 없는 기간은 `00.memory/tasks/{done,in-progress,todo,cancelled}/*.md`에서 `work-dates`(없으면 `start`/`end`)가 해당 월과 겹치는 파일로 보충
    - 하나도 없으면 "해당 월 기록이 없습니다"라고 알리고 종료한다.
 
 3. **기존 요약 확인**: `00.memory/monthly/YYYY-MM.md`가 이미 있으면 덮어쓸지 확인한다.
@@ -29,9 +29,14 @@ description: 월간 작업 요약 생성. 사용자가 "/monthly-summary", "월�
    ## 주요 작업
    - {주제별로 그룹핑, 임팩트 순 정렬}
 
+   ## 중단한 작업
+   - {cancelled 태스크와 중단 이유 — 없으면 섹션 생략}
+
    ## 주별 상세
    ### W{NN} ({시작일} ~ {종료일})
    - {해당 주 요약}
    ```
+
+   `cancelled` 태스크는 해당 월의 시도와 작업량에는 포함하되 완료 성과로 표현하지 않는다. 상태와 중단 이유를 명시한다.
 
 5. **저장**: `00.memory/monthly/YYYY-MM.md`에 저장하고 (폴더 없으면 생성) 경로와 소스 개수(주간 요약 N개 + 태스크 N개)를 보고한다.
