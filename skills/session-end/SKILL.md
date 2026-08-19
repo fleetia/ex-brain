@@ -23,17 +23,18 @@ description: 세션 종료 시 현재 세션의 컨텍스트를 요약하고, �
 
 ### 2. 태스크 파일 생성 또는 갱신
 
-1. `00.memory/tasks/{done,in-progress,todo}/`에서 같은 주제의 기존 파일을 파일명으로 찾는다 (`ls` + 파일명 grep).
+1. `00.memory/tasks/{done,in-progress,todo,cancelled}/`에서 같은 주제의 기존 파일을 파일명으로 찾는다 (`ls` + 파일명 grep).
 2. 있으면 그 파일을 갱신하고, 없으면 `YYMMDD_{주제-kebab-case}.md`를 새로 만든다.
 3. 같은 주제로 볼 만한 기존 파일이 2개 이상이면 자동으로 고르거나 병합하지 말고, 경로를 나열해 어느 쪽을 갱신할지 사용자에게 확인받는다.
-4. 남은 작업이 있으면 `in-progress/`, 모두 끝났으면 `done/`에 둔다.
+4. 유일한 기존 파일이라도 `done` 또는 `cancelled` 상태면 조용히 다시 열지 않는다. 사용자가 해당 기록을 재개할지 확인한 뒤, 동의했을 때만 `status: in-progress`로 바꾸고 `end`를 제거해 `in-progress/`로 옮긴다. 재개 사실과 이유를 `## 과정 노트`에 남긴다.
+5. 남은 작업이 있으면 `in-progress/`, 모두 끝났으면 `done/`에 둔다. 사용자가 이 일을 더 진행하지 않겠다고 명시적으로 확정한 경우에만 `cancelled/`에 둔다.
 
 새 문서 구조:
 
 ```markdown
 ---
 title: {작업 한 줄 요약}
-status: done | in-progress
+status: done | in-progress | cancelled
 start: YYYY-MM-DD
 end: YYYY-MM-DD
 tags: [{관련 태그}]
@@ -52,7 +53,8 @@ work-dates: [YYYY-MM-DD]
 
 - 값이 없는 섹션과 frontmatter 필드는 생략한다.
 - 기존 문서를 갱신할 때는 오늘 날짜를 `work-dates`에 추가하고, 해결된 미완료 항목을 지운다.
-- 모든 작업이 끝났으면 `status: done`과 `end`를 기록하고 파일을 `done/`으로 옮긴다. 옮기기 전에 vault 전체에서 파일명을 grep해서 이 파일을 가리키는 링크가 있으면 경로를 함께 고친다.
+- 모든 작업이 끝났으면 `status: done`과 `end`를 기록하고 파일을 `done/`으로 옮긴다. 옮기기 전에 `00.memory/`, `10.notes/`, `20.work/`에서 파일명을 grep해 이 파일을 가리키는 링크가 있으면 경로를 함께 고친다. `90.private/`는 이번 세션에서 사용자가 명시적으로 다룬 경우에만 별도로 확인한다.
+- 사용자가 중단을 확정하면 `status: cancelled`와 `end`를 기록하고 `cancelled/`로 옮긴다. 완료하지 않은 일을 `done`으로 보내지 않고, 중단 이유를 `## 과정 노트`에 남긴다. 방치됐다는 이유만으로 취소를 추론하지 않는다.
 - 파일명에 사람 이름을 넣지 않는다 (파일명이 세션 시작 시 자동으로 주입되기 때문).
 
 ### 3. 재사용 지식 승격
@@ -66,7 +68,7 @@ work-dates: [YYYY-MM-DD]
 
 ### 4. Vault lint
 
-`python3 ~/KnowledgeBase/_kit/scripts/kb_lint.py --check`를 실행한다.
+`__KB_LINT_COMMAND__`를 실행한다. setup.sh가 이 자리를 local runtime과 vault의 실제 경로로 바꾼다.
 
 - 이번 세션이 만든 깨진 링크, INDEX 누락, 폴더-status 불일치는 즉시 수정하고 다시 검사한다.
 - 세션과 무관한 기존 문제는 수정하지 않고 태스크 파일의 `## 미완료`에 남긴다.

@@ -1,4 +1,5 @@
 {
+  "description": "AI session kit hooks. Review and trust changed command hooks with /hooks.",
   "hooks": {
     "SessionStart": [
       {
@@ -15,7 +16,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Write|Edit",
+        "matcher": "apply_patch|Edit|Write",
         "hooks": [
           {
             "type": "command",
