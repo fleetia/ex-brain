@@ -1,5 +1,11 @@
 # ai-session-kit
 
+## 0.2.0
+
+### Minor Changes
+
+- ef3db76: Windows PowerShell 5.1용 설치·제거·hook과 native Windows CI 검증을 추가합니다.
+
 ## 0.1.0
 
 ### Minor Changes
