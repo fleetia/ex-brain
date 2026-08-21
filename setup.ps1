@@ -412,7 +412,7 @@ function New-HookCommand {
   if ($hookFileName -notin @('session-context.ps1', 'check-pii.ps1')) {
     Fail "지원하지 않는 Windows hook 파일입니다: $hookFileName"
   }
-  $scriptBody = '$userHome=$env:AI_SESSION_KIT_USER_HOME;if([string]::IsNullOrWhiteSpace($userHome)){$userHome=[Environment]::GetFolderPath(''UserProfile'')};$stateDirectory=[IO.Path]::Combine($userHome,''.ai-session-kit'');& ([IO.Path]::Combine($stateDirectory,''runtime'',''hooks'',''' + $hookFileName + ''')) -StateDirectory $stateDirectory'
+  $scriptBody = '$userHome=$env:AI_SESSION_KIT_USER_HOME;if([string]::IsNullOrWhiteSpace($userHome)){$userHome=[Environment]::GetFolderPath(''UserProfile'')};$stateDirectory=[IO.Path]::Combine($userHome,''.ai-session-kit'');& ([IO.Path]::Combine($stateDirectory,''runtime'',''hooks'',''' + $hookFileName + ''')) -StateDirectory $stateDirectory;exit $LASTEXITCODE'
   if ($Style -eq 'Windows') {
     return '"' + $script:SystemPowerShell + '" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "' + $scriptBody + '"'
   }

@@ -682,6 +682,7 @@ try {
     $unknownResult = Invoke-ChildPowerShell -ScriptPath $piiHook -Arguments @('-VaultPath', $vaultA, '-StateDirectory', $stateDirectory) -InputText $unknownPayload
     Assert-FailClosedResult -Result $unknownResult -SensitiveValue 'FutureWrite' -Message 'unknown tool fail-closed 실패'
 
+    [System.IO.File]::AppendAllText($codexHooks, [Environment]::NewLine, $utf8NoBom)
     $stateBeforeFailure = [System.IO.File]::ReadAllText($stateFile)
     $runtimeBeforeFailure = Get-TreeFingerprint $runtime
     $claudeBeforeFailure = [System.IO.File]::ReadAllText($claudeSettings)
