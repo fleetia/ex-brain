@@ -240,7 +240,11 @@ function Read-BoundedJsonInput {
         }
         $bytes = $memory.ToArray()
         $encoding = [System.Text.UTF8Encoding]::new($false, $true)
-        return $encoding.GetString($bytes)
+        $offset = 0
+        if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+            $offset = 3
+        }
+        return $encoding.GetString($bytes, $offset, $bytes.Length - $offset)
     }
     catch {
         Stop-WithFailure -Message 'PII guard could not safely read the PreToolUse request, so the write was blocked.'

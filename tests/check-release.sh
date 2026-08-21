@@ -180,21 +180,29 @@ for variant in cli app; do
   cmp "vault-template/90.private/README.md" "$ARTIFACTS/$variant/vault-template/90.private/README.md"
 done
 
-for workflow in .github/workflows/verify.yml .github/workflows/release.yml; do
-  grep -Fq -- 'runs-on: windows-latest' "$workflow"
-  grep -Fq -- 'tests\windows-installer.ps1' "$workflow"
-done
-grep -Fq -- 'needs: windows-native' .github/workflows/release.yml
+workflow=.github/workflows/verify.yml
+test ! -e .github/workflows/release.yml
+test "$(grep -Fc -- 'runs-on: windows-latest' "$workflow")" -eq 1
+grep -Fq -- 'tests\windows-installer.ps1' "$workflow"
+test "$(grep -Fc -- 'runs-on: macos-latest' "$workflow")" -eq 1
+grep -Fq -- 'shell: /bin/bash {0}' "$workflow"
+grep -Fq -- 'brew install jq' "$workflow"
+grep -Fq -- 'run: /bin/bash tests/check-release.sh' "$workflow"
+grep -Fq -- "if: github.event_name == 'push' && github.ref == 'refs/heads/main'" "$workflow"
+grep -Fq -- 'needs: [release-checks, macos-native, windows-native]' "$workflow"
+grep -Fq -- 'concurrency: ${{ github.workflow }}-${{ github.ref }}' "$workflow"
+grep -Fq -- 'contents: write' "$workflow"
+grep -Fq -- 'pull-requests: write' "$workflow"
 grep -Fq -- '"commandWindows": "__SESSION_HOOK_WINDOWS_COMMAND__"' codex-hooks-snippet.json
 grep -Fq -- '"commandWindows": "__PII_HOOK_WINDOWS_COMMAND__"' codex-hooks-snippet.json
 
-grep -Fq -- '--target "$GITHUB_SHA"' .github/workflows/release.yml
-grep -Fq -- '--json isDraft,targetCommitish,assets' .github/workflows/release.yml
-grep -Fq -- '.targetCommitish == $tagCommit' .github/workflows/release.yml
-grep -Fq -- '.name == $cli and .size > 0' .github/workflows/release.yml
-grep -Fq -- '.name == $app and .size > 0' .github/workflows/release.yml
-grep -Fq -- 'EXISTING_TAG_COMMIT" != "$GITHUB_SHA"' .github/workflows/release.yml
-if [ "$(grep -Fc -- 'git rev-parse --verify "refs/tags/$TAG^{commit}"' .github/workflows/release.yml)" -ne 2 ]; then
+grep -Fq -- '--target "$GITHUB_SHA"' "$workflow"
+grep -Fq -- '--json isDraft,targetCommitish,assets' "$workflow"
+grep -Fq -- '.targetCommitish == $tagCommit' "$workflow"
+grep -Fq -- '.name == $cli and .size > 0' "$workflow"
+grep -Fq -- '.name == $app and .size > 0' "$workflow"
+grep -Fq -- 'EXISTING_TAG_COMMIT" != "$GITHUB_SHA"' "$workflow"
+if [ "$(grep -Fc -- 'git rev-parse --verify "refs/tags/$TAG^{commit}"' "$workflow")" -ne 2 ]; then
   echo "✗ release workflow의 tag 존재 확인이 fail-closed 하지 않습니다."
   exit 1
 fi
@@ -204,7 +212,7 @@ if [ -n "$missing_tag_commit" ]; then
   echo "✗ 없는 release tag를 존재하는 commit으로 잘못 해석했습니다: $missing_tag_commit"
   exit 1
 fi
-if grep -Fq -- '.targetCommitish == $sha' .github/workflows/release.yml; then
+if grep -Fq -- '.targetCommitish == $sha' "$workflow"; then
   echo "✗ 기존 release를 현재 workflow commit과 비교해 후속 main push를 실패시킵니다."
   exit 1
 fi

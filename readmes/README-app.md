@@ -29,7 +29,7 @@ AI와 작업 ──▶ "세션 종료해줘" ──▶ 내 지식 폴더에 기�
 
 - **Claude Code 또는 Codex** — 내 컴퓨터의 파일을 만들고 고칠 수 있는 로컬 agent가 필요합니다. 웹 브라우저 전용 챗에는 설치할 수 없습니다.
 - **macOS, Linux 또는 Windows** — native Windows는 Windows PowerShell 5.1 이상을 사용하며 Codex에서는 Windows 11을 권장합니다. Claude Code의 Bash 기능을 함께 쓰고 싶다면 Git for Windows를 추가할 수 있지만, 이 킷 설치에는 필요하지 않습니다.
-- macOS·Linux·WSL은 `bash`와 `jq`가 필요합니다. native Windows PowerShell판은 내장 JSON 기능을 사용하므로 `jq`가 필요 없습니다.
+- macOS·Linux·WSL은 `bash`와 `jq`가 필요합니다. macOS에 `jq`가 없다면 `brew install jq`로 설치할 수 있습니다. Python 3는 vault lint에만 필요하므로 없어도 기록·복원 기능은 동작합니다. native Windows PowerShell판은 내장 JSON 기능을 사용하므로 `jq`가 필요 없습니다.
 
 ## 설치
 

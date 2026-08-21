@@ -33,7 +33,9 @@ bash build.sh /tmp/output  # 원하는 출력 폴더 지정
 bash tests/check-release.sh
 ```
 
-native Windows installer 회귀 검증은 GitHub Actions의 `windows-latest` job에서 Windows PowerShell 5.1로 실행합니다.
+`tests/check-release.sh` 실행에는 Bash, `jq`, Python 3가 필요합니다. macOS에 `jq`가 없다면 `brew install jq`로 설치할 수 있습니다. Python 3는 이 배포 검증과 vault lint에 필요하지만, 배포된 킷의 기록·복원 기능 자체는 Python 없이도 동작합니다.
+
+GitHub Actions는 Ubuntu, macOS의 시스템 `/bin/bash`, native Windows를 각각 검증합니다. Windows job은 `windows-latest`에서 Windows PowerShell 5.1로 실행하며, 세 환경이 모두 통과한 `main` 푸시만 릴리스를 진행합니다.
 
 `build.sh`는 자신이 만든 marker가 있는 `cli/`, `app/`만 교체합니다. 같은 이름의 일반 폴더나 symlink가 있으면 내용을 건드리지 않고 실패합니다.
 

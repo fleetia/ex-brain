@@ -77,7 +77,7 @@ vault 위생은 자동으로 관리됩니다. 세션을 종료할 때마다 lint
 
 3. 새 세션을 엽니다. Claude Code는 바로 동작합니다. Codex는 `/hooks`에서 새 command hook을 검토하고 신뢰합니다
 
-여러 번 실행해도 안전합니다. 기존 vault에는 빠진 template 파일만 채우고 기존 문서는 보존합니다. 수정하지 않은 구버전 기본 CLAUDE.md만 새 privacy 규칙으로 migration하고 backup을 남깁니다. 다른 도구가 만든 skill 연결이나 폴더와 충돌하면 그대로 보존하고 설치를 멈춥니다. 올바른 JSON에 등록된 다른 hook은 지우지 않고 함께 유지합니다. Bash판의 JSON 병합과 민감정보 검사에는 `jq`가 필요하지만 Windows PowerShell판은 내장 JSON 기능을 사용해 별도 `jq`가 필요 없습니다.
+여러 번 실행해도 안전합니다. 기존 vault에는 빠진 template 파일만 채우고 기존 문서는 보존합니다. 수정하지 않은 구버전 기본 CLAUDE.md만 새 privacy 규칙으로 migration하고 backup을 남깁니다. 다른 도구가 만든 skill 연결이나 폴더와 충돌하면 그대로 보존하고 설치를 멈춥니다. 올바른 JSON에 등록된 다른 hook은 지우지 않고 함께 유지합니다. Bash판의 JSON 병합과 민감정보 검사에는 `jq`가 필요하며, macOS에 없다면 `brew install jq`로 설치할 수 있습니다. Windows PowerShell판은 내장 JSON 기능을 사용해 별도 `jq`가 필요 없습니다.
 
 스킬은 Claude Code의 `~/.claude/skills/`와 Codex의 `~/.agents/skills/`에 연결됩니다. Windows에서는 관리자 권한이 필요 없는 directory junction을 사용합니다. 훅은 Claude Code의 `~/.claude/settings.json`과 Codex의 `~/.codex/hooks.json`에 각각 등록되고, Codex에는 native 실행용 `commandWindows`도 함께 설정됩니다. Codex는 새 hook이나 변경된 hook의 hash를 처음 한 번 `/hooks`에서 신뢰해야 실행합니다.
 
