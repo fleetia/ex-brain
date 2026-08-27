@@ -291,11 +291,35 @@ function Get-ConfiguredVaultFromState {
     }
     $stateLines = [System.IO.File]::ReadAllLines($stateItem.FullName)
     if ($stateLines.Length -lt 2 -or
-        ($stateLines[0] -cne 'ai-session-kit-state-v1' -and $stateLines[0] -cne 'ai-session-kit-state-v2') -or
+        ($stateLines[0] -cne 'ai-session-kit-state-v1' -and
+         $stateLines[0] -cne 'ai-session-kit-state-v2' -and
+         $stateLines[0] -cne 'ai-session-kit-state-v3') -or
         [string]::IsNullOrWhiteSpace($stateLines[1]) -or
         (Test-HasControlCharacter -Value $stateLines[1]) -or
         -not [System.IO.Path]::IsPathRooted($stateLines[1])) {
         throw 'Invalid install state.'
+    }
+    if (($stateLines[0] -ceq 'ai-session-kit-state-v2' -or $stateLines[0] -ceq 'ai-session-kit-state-v3') -and
+        ($stateLines.Length -lt 4 -or [string]::IsNullOrEmpty($stateLines[2]) -or [string]::IsNullOrEmpty($stateLines[3]))) {
+        throw 'Invalid install state.'
+    }
+    if ($stateLines[0] -ceq 'ai-session-kit-state-v3') {
+        $skillCount = 0
+        if ($stateLines.Length -lt 6 -or
+            $stateLines[4] -cne 'ai-session-kit-owned-skills-v1' -or
+            -not [int]::TryParse($stateLines[5], [ref]$skillCount) -or
+            $skillCount -le 0 -or
+            $stateLines.Length -ne ($skillCount + 6)) {
+            throw 'Invalid install state.'
+        }
+        $seenSkills = @{}
+        for ($skillIndex = 0; $skillIndex -lt $skillCount; $skillIndex += 1) {
+            $skillName = $stateLines[$skillIndex + 6]
+            if ($skillName -notmatch '^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$' -or $seenSkills.ContainsKey($skillName)) {
+                throw 'Invalid install state.'
+            }
+            $seenSkills[$skillName] = $true
+        }
     }
     return $stateLines[1]
 }

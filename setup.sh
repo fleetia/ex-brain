@@ -12,14 +12,19 @@ CLAUDE_SETTINGS="$CLAUDE_DIR/settings.json"
 CODEX_HOOKS="$CODEX_DIR/hooks.json"
 STATE_DIR="$USER_HOME/.ai-session-kit"
 STATE_FILE="$STATE_DIR/install-state"
-STATE_MARKER="ai-session-kit-state-v2"
+STATE_MARKER="ai-session-kit-state-v3"
+PREVIOUS_STATE_MARKER="ai-session-kit-state-v2"
 LEGACY_STATE_MARKER="ai-session-kit-state-v1"
+STATE_SKILLS_MARKER="ai-session-kit-owned-skills-v1"
 RUNTIME_DIR="$STATE_DIR/runtime"
 RUNTIME_MARKER=".ai-session-kit-runtime"
-RUNTIME_MARKER_CONTENT="ai-session-kit-runtime-v1"
+RUNTIME_MARKER_CONTENT="ai-session-kit-runtime-v2"
+LEGACY_RUNTIME_MARKER_CONTENT="ai-session-kit-runtime-v1"
 SESSION_HOOK_MARKER="AI_SESSION_KIT_HOOK=session-context"
 PII_HOOK_MARKER="AI_SESSION_KIT_HOOK=check-pii"
-SKILLS=(session-start session-end kb-lookup kb-routing humanize-ko cognitive-rhythm-writing task-doc-writing weekly-summary monthly-summary)
+SKILLS=(session-start session-end kb-lookup kb-routing guided-development guided-debugging project-run-and-preview change-verification humanize-ko cognitive-rhythm-writing task-doc-writing weekly-summary monthly-summary)
+STATELESS_LEGACY_SENTINEL_SKILLS=(session-start session-end kb-lookup kb-routing)
+STATELESS_LEGACY_OPTIONAL_SKILLS=(humanize-ko cognitive-rhythm-writing task-doc-writing weekly-summary monthly-summary)
 SKILL_ROOTS=("$CLAUDE_DIR/skills" "$USER_HOME/.agents/skills")
 ts="$(date +%Y%m%d%H%M%S)"
 stage=""
@@ -143,19 +148,57 @@ if [ -e "$STATE_FILE" ] || [ -L "$STATE_FILE" ]; then
     fail "설치 상태 파일이 손상되었습니다: $STATE_FILE"
     exit 1
   fi
-  state_marker=""
-  IFS= read -r state_marker < "$STATE_FILE" || true
-  OLD_VAULT="$(sed -n '2p' "$STATE_FILE")"
-  PREVIOUS_SESSION_COMMAND="$(sed -n '3p' "$STATE_FILE")"
-  PREVIOUS_PII_COMMAND="$(sed -n '4p' "$STATE_FILE")"
-  if { [ "$state_marker" != "$STATE_MARKER" ] && [ "$state_marker" != "$LEGACY_STATE_MARKER" ]; } || [ -z "$OLD_VAULT" ]; then
+  state_lines=()
+  while IFS= read -r state_line || [ -n "$state_line" ]; do
+    state_lines[${#state_lines[@]}]="$state_line"
+  done < "$STATE_FILE"
+  state_marker="${state_lines[0]:-}"
+  OLD_VAULT="${state_lines[1]:-}"
+  PREVIOUS_SESSION_COMMAND="${state_lines[2]:-}"
+  PREVIOUS_PII_COMMAND="${state_lines[3]:-}"
+  if { [ "$state_marker" != "$STATE_MARKER" ] &&
+    [ "$state_marker" != "$PREVIOUS_STATE_MARKER" ] &&
+    [ "$state_marker" != "$LEGACY_STATE_MARKER" ]; } || [ -z "$OLD_VAULT" ]; then
     fail "설치 상태 파일 형식을 확인할 수 없습니다: $STATE_FILE"
     exit 1
   fi
-  if [ "$state_marker" = "$STATE_MARKER" ] &&
+  if { [ "$state_marker" = "$STATE_MARKER" ] || [ "$state_marker" = "$PREVIOUS_STATE_MARKER" ]; } &&
     { [ -z "$PREVIOUS_SESSION_COMMAND" ] || [ -z "$PREVIOUS_PII_COMMAND" ]; }; then
     fail "설치 상태에 exact hook command가 없습니다: $STATE_FILE"
     exit 1
+  fi
+  if [ "$state_marker" = "$STATE_MARKER" ]; then
+    state_skill_count="${state_lines[5]:-}"
+    case "$state_skill_count" in
+      ''|0*|*[!0-9]*) fail "설치 상태의 skill manifest 개수가 유효하지 않습니다: $STATE_FILE"; exit 1 ;;
+    esac
+    if [ "${state_lines[4]:-}" != "$STATE_SKILLS_MARKER" ] ||
+      [ "${#state_lines[@]}" -ne $((state_skill_count + 6)) ]; then
+      fail "설치 상태의 skill manifest를 확인할 수 없습니다: $STATE_FILE"
+      exit 1
+    fi
+    for ((state_skill_index = 0; state_skill_index < state_skill_count; state_skill_index += 1)); do
+      state_skill_name="${state_lines[$((state_skill_index + 6))]}"
+      case "$state_skill_name" in
+        ''|*[!a-z0-9-]*|-*|*-) fail "설치 상태의 skill 이름이 유효하지 않습니다: $STATE_FILE"; exit 1 ;;
+      esac
+      for ((previous_skill_index = 0; previous_skill_index < state_skill_index; previous_skill_index += 1)); do
+        if [ "$state_skill_name" = "${state_lines[$((previous_skill_index + 6))]}" ]; then
+          fail "설치 상태의 skill manifest에 중복 항목이 있습니다: $STATE_FILE"
+          exit 1
+        fi
+      done
+    done
+    if [ "$state_skill_count" -ne "${#SKILLS[@]}" ]; then
+      fail "기존 v3 skill manifest가 현재 설치 목록과 달라 자동 업그레이드를 중단합니다. 설치에 사용한 버전의 uninstaller로 먼저 제거하세요: $STATE_FILE"
+      exit 1
+    fi
+    for ((state_skill_index = 0; state_skill_index < state_skill_count; state_skill_index += 1)); do
+      if [ "${state_lines[$((state_skill_index + 6))]}" != "${SKILLS[$state_skill_index]}" ]; then
+        fail "기존 v3 skill manifest가 현재 설치 목록과 달라 자동 업그레이드를 중단합니다. 설치에 사용한 버전의 uninstaller로 먼저 제거하세요: $STATE_FILE"
+        exit 1
+      fi
+    done
   fi
   case "$OLD_VAULT" in
     /*) ;;
@@ -166,7 +209,7 @@ fi
 discover_legacy_vault() {
   local name target actual suffix prefix candidate=""
 
-  for name in "${SKILLS[@]}"; do
+  for name in "${STATELESS_LEGACY_SENTINEL_SKILLS[@]}"; do
     target="$CLAUDE_DIR/skills/$name"
     [ -L "$target" ] || return 1
     actual="$(readlink "$target")"
@@ -183,8 +226,18 @@ discover_legacy_vault() {
     fi
   done
 
-  if { [ -f "$candidate/_kit/hooks/session-context.sh" ] && [ -f "$candidate/_kit/hooks/check-pii.sh" ]; } ||
-    { [ -f "$VAULT/_kit/hooks/session-context.sh" ] && [ -f "$VAULT/_kit/hooks/check-pii.sh" ]; }; then
+  for name in "${STATELESS_LEGACY_OPTIONAL_SKILLS[@]}"; do
+    target="$CLAUDE_DIR/skills/$name"
+    if [ -L "$target" ]; then
+      actual="$(readlink "$target")"
+      [ "$actual" = "$candidate/_kit/skills/$name" ] || return 1
+    elif [ -e "$target" ]; then
+      return 1
+    fi
+  done
+
+  if [ -f "$candidate/_kit/hooks/session-context.sh" ] ||
+    [ -f "$VAULT/_kit/hooks/session-context.sh" ]; then
     printf '%s' "$candidate"
     return 0
   fi
@@ -334,8 +387,13 @@ assert_runtime_replaceable() {
     fail "로컬 runtime이 안전한 폴더가 아닙니다: $RUNTIME_DIR"
     return 1
   fi
-  if [ -L "$RUNTIME_DIR/$RUNTIME_MARKER" ] || [ ! -f "$RUNTIME_DIR/$RUNTIME_MARKER" ] ||
-    [ "$(cat "$RUNTIME_DIR/$RUNTIME_MARKER")" != "$RUNTIME_MARKER_CONTENT" ]; then
+  if [ -L "$RUNTIME_DIR/$RUNTIME_MARKER" ] || [ ! -f "$RUNTIME_DIR/$RUNTIME_MARKER" ]; then
+    fail "installer 소유 marker가 없는 runtime을 보존했습니다: $RUNTIME_DIR"
+    return 1
+  fi
+  runtime_marker_content="$(cat "$RUNTIME_DIR/$RUNTIME_MARKER")"
+  if [ "$runtime_marker_content" != "$RUNTIME_MARKER_CONTENT" ] &&
+    [ "$runtime_marker_content" != "$LEGACY_RUNTIME_MARKER_CONTENT" ]; then
     fail "installer 소유 marker가 없는 runtime을 보존했습니다: $RUNTIME_DIR"
     return 1
   fi
@@ -626,8 +684,12 @@ done
 printf '✓ Claude + Codex skill symlink 설치·검증 완료\n'
 
 state_tmp="$(mktemp "$STATE_DIR/.install-state.XXXXXX")"
-printf '%s\n%s\n%s\n%s\n' \
-  "$STATE_MARKER" "$VAULT" "$SESSION_HOOK_COMMAND" "$PII_HOOK_COMMAND" > "$state_tmp"
+{
+  printf '%s\n%s\n%s\n%s\n%s\n%s\n' \
+    "$STATE_MARKER" "$VAULT" "$SESSION_HOOK_COMMAND" "$PII_HOOK_COMMAND" \
+    "$STATE_SKILLS_MARKER" "${#SKILLS[@]}"
+  printf '%s\n' "${SKILLS[@]}"
+} > "$state_tmp"
 chmod 600 "$state_tmp"
 mv "$state_tmp" "$STATE_FILE"
 transaction_committed=1
@@ -662,9 +724,9 @@ fi
 cat <<'DONE'
 
 설치 후 확인:
-- Claude: 새 세션에서 SessionStart hook이 진행 중 작업을 로드합니다.
+- Claude: 새 세션에서 SessionStart hook이 진행 중 작업 개수만 안내합니다.
 - Codex: /hooks에서 새 command hook 정의를 검토하고 trust해야 실행됩니다. vault를 옮겨 재설치하면 command가 바뀌므로 다시 trust하세요.
-- 세션 기록은 SessionEnd 자동화가 아닙니다. 세션을 마칠 때 "세션 종료해줘"라고 요청해 session-end skill을 실행하세요.
+- 세션 기록은 자동 저장되지 않습니다. 직접 "세션 종료해줘"라고 말하거나, AI가 안전하게 끊을 수 있는 지점에서 정리를 제안하면 동의하세요.
 - 이전 설치의 vault/_kit은 자동 삭제하지 않지만 더 이상 실행하거나 global skill로 연결하지 않습니다.
 DONE
 exit "$result"

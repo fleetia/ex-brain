@@ -1,14 +1,25 @@
-# ex-brain
+# AI 개발·세션 기록 킷
 
-비개발자와 디자이너도 로컬 폴더에 AI 작업 기록과 재사용 지식을 쌓을 수 있게 만드는 `ai-session-kit`의 원본 저장소입니다.
+Claude Code나 Codex로 앱과 웹사이트를 만들고 고치는 일을 여러 대화에 걸쳐 이어가기 위한 `ai-session-kit`의 원본 저장소입니다. 한 번 질문하고 끝나는 대화에는 필요하지 않습니다. 작업이 길어지면 AI가 이전 결정과 남은 일을 놓치거나, 방향만 제안한 상태를 실제 구현·검증 완료처럼 설명하기 쉬워집니다.
+
+이 킷은 새로운 개발 AI가 아니라 **AI가 일하는 규칙과 다음 대화용 인수인계 방식**을 설치합니다. 사용자는 기술 스택 대신 원하는 결과를 평소 말로 설명하고, AI는 기존 project를 살펴본 뒤 작은 범위로 구현하고 확인합니다.
+
+## 무엇이 달라지나
+
+- "완료한 항목을 숨길 수 있게 해줘"처럼 결과를 말하면 AI가 확인 가능한 동작으로 정리해 구현합니다.
+- 결과를 `제안`, `구현`, `검증`, `전달`로 구분해 어디까지 끝났는지 설명합니다.
+- 대화가 길어지고 안전한 마무리 지점에 도달하면 AI가 세션 정리를 한 번 제안합니다. 동의하면 결정·검증·남은 일을 local markdown으로 기록합니다.
+- 새 대화에서 "이어서 하자"라고 하면 현재 project의 기록과 실제 code state를 확인한 뒤 계속합니다. 인수인계 기록이 code 자체를 복사하지는 않으므로, commit하지 않은 변경은 원래 작업 폴더에 남아 있어야 합니다.
+
+처음 설치하거나 사용하는 사람은 [앱 사용자 안내](readmes/README-app.md)를 먼저 읽으세요. 터미널에서 직접 설치하려면 [CLI 사용자 안내](readmes/README-cli.md)를 참고하세요.
 
 ## ai-session-kit 원본 저장소
 
-AI 세션 기록 킷의 **단일 원본**입니다. 이 폴더를 직접 배포하지 말고, build.sh로 만든 산출물을 배포합니다.
+AI 개발·세션 기록 킷의 **단일 원본**입니다. 이 폴더를 직접 배포하지 말고, build.sh로 만든 산출물을 배포합니다.
 
 ## 구조
 
-- `skills/` `hooks/` `scripts/` `vault-template/` `setup.sh` `setup.ps1` `uninstall.sh` `uninstall.ps1` — macOS·Linux·Windows 공통 킷 본체
+- `skills/` `hooks/` `scripts/` `vault-template/` `setup.sh` `setup.ps1` `uninstall.sh` `uninstall.ps1` — 기능 구현·오류 추적·local 미리보기·변경 확인과 세션 기록을 포함한 macOS·Linux·Windows 공통 킷 본체
 - `readmes/README-cli.md` — 터미널·Claude Code 사용자용 안내
 - `readmes/README-app.md` — Claude/Codex 앱 사용자용 안내 (일반인)
 - `build.sh` — `dist/cli`, `dist/app` 산출물 생성 (README만 다르고 코드는 동일)

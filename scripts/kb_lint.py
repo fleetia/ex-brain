@@ -34,6 +34,8 @@ CODE_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
 INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
 STATUS_RE = re.compile(r"^status:\s*(\S+)", re.MULTILINE)
 FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---(?:\r?\n|\Z)", re.DOTALL)
+SOURCE_REVISION_RE = re.compile(r"git:(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})\Z")
+WORKING_COPY_STATES = {"clean", "uncommitted", "unknown"}
 WIKI_STATUSES = {"active", "archived"}
 
 
@@ -68,6 +70,19 @@ def get_status(p: Path) -> str | None:
         return None
     match = STATUS_RE.search(frontmatter.group(1))
     return match.group(1) if match else None
+
+
+def get_frontmatter_value(text: str, key: str) -> str | None:
+    frontmatter = FRONTMATTER_RE.search(text)
+    if not frontmatter:
+        return None
+    match = re.search(rf"^{re.escape(key)}:\s*(.*?)\s*$", frontmatter.group(1), re.MULTILINE)
+    if not match:
+        return None
+    value = match.group(1)
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        return value[1:-1]
+    return value
 
 
 def without_code(text: str) -> str:
@@ -196,6 +211,38 @@ def check_task_status(vault: Path) -> list[str]:
     return errors
 
 
+def check_task_source_state(vault: Path) -> list[str]:
+    errors = []
+    for status in TASK_STATUSES:
+        directory = vault / TASKS_DIR / status
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.glob("*.md")):
+            text = read(path)
+            relative_path = path.relative_to(vault)
+            source_revision = get_frontmatter_value(text, "source-revision")
+            working_copy_state = get_frontmatter_value(text, "working-copy-state")
+
+            if source_revision is not None and not SOURCE_REVISION_RE.fullmatch(source_revision):
+                errors.append(f"invalid-source-revision: {relative_path}")
+            if source_revision is not None and working_copy_state is None:
+                errors.append(f"missing-working-copy-state: {relative_path}")
+            if working_copy_state is None:
+                continue
+            if working_copy_state not in WORKING_COPY_STATES:
+                allowed = ", ".join(sorted(WORKING_COPY_STATES))
+                errors.append(
+                    f"invalid-working-copy-state: {relative_path} — 허용값: {allowed}"
+                )
+                continue
+            if working_copy_state == "clean" and not source_revision:
+                errors.append(f"missing-source-revision: {relative_path}")
+            if working_copy_state == "uncommitted":
+                if not re.search(r"^## 작업 사본\s*$", text, re.MULTILINE):
+                    errors.append(f"missing-working-copy-section: {relative_path}")
+    return errors
+
+
 def check_wiki_status(vault: Path) -> list[str]:
     errors = []
     for zone in WIKI_ZONES:
@@ -261,6 +308,7 @@ def main() -> int:
         + check_external_symlinks(vault, files)
         + check_index(vault)
         + check_task_status(vault)
+        + check_task_source_state(vault)
         + check_wiki_status(vault)
         + check_active_links_to_archived(vault)
     )

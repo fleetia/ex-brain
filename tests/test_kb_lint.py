@@ -149,6 +149,70 @@ class KnowledgeBaseLintTest(unittest.TestCase):
         self.assertTrue(any(error.startswith("missing-status:") for error in errors))
         self.assertTrue(any(error.startswith("invalid-status:") for error in errors))
 
+    def test_valid_task_source_snapshots_are_accepted(self) -> None:
+        clean = self.vault / "00.memory" / "tasks" / "in-progress" / "clean.md"
+        clean.write_text(
+            "---\n"
+            "status: in-progress\n"
+            f'source-revision: "git:{"a" * 40}"\n'
+            "working-copy-state: clean\n"
+            "---\n",
+            encoding="utf-8",
+        )
+        unborn = self.vault / "00.memory" / "tasks" / "in-progress" / "unborn.md"
+        unborn.write_text(
+            "---\n"
+            "status: in-progress\n"
+            "working-copy-state: uncommitted\n"
+            "---\n\n"
+            "## 작업 사본\n\n"
+            "- untracked: src/index.ts\n",
+            encoding="utf-8",
+        )
+
+        self.assertEqual(KB_LINT.check_task_source_state(self.vault), [])
+
+    def test_invalid_task_source_snapshots_are_reported(self) -> None:
+        task_directory = self.vault / "00.memory" / "tasks" / "in-progress"
+        (task_directory / "invalid-state.md").write_text(
+            "---\nstatus: in-progress\nworking-copy-state: dirty\n---\n",
+            encoding="utf-8",
+        )
+        (task_directory / "invalid-revision.md").write_text(
+            "---\n"
+            "status: in-progress\n"
+            'source-revision: "git:not-a-revision"\n'
+            "working-copy-state: clean\n"
+            "---\n",
+            encoding="utf-8",
+        )
+        (task_directory / "missing-state.md").write_text(
+            "---\n"
+            "status: in-progress\n"
+            f'source-revision: "git:{"b" * 40}"\n'
+            "---\n",
+            encoding="utf-8",
+        )
+        (task_directory / "missing-revision.md").write_text(
+            "---\nstatus: in-progress\nworking-copy-state: clean\n---\n",
+            encoding="utf-8",
+        )
+        (task_directory / "missing-section.md").write_text(
+            "---\n"
+            "status: in-progress\n"
+            "working-copy-state: uncommitted\n"
+            "---\n",
+            encoding="utf-8",
+        )
+
+        errors = KB_LINT.check_task_source_state(self.vault)
+
+        self.assertTrue(any(error.startswith("invalid-working-copy-state:") for error in errors))
+        self.assertTrue(any(error.startswith("invalid-source-revision:") for error in errors))
+        self.assertTrue(any(error.startswith("missing-working-copy-state:") for error in errors))
+        self.assertTrue(any(error.startswith("missing-source-revision:") for error in errors))
+        self.assertTrue(any(error.startswith("missing-working-copy-section:") for error in errors))
+
     def test_wiki_status_is_required_and_must_be_known(self) -> None:
         missing = self.vault / "10.notes" / "missing.md"
         missing.write_text("---\ntitle: 상태 없음\n---\n", encoding="utf-8")

@@ -12,6 +12,10 @@ $skills = @(
     'session-end',
     'kb-lookup',
     'kb-routing',
+    'guided-development',
+    'guided-debugging',
+    'project-run-and-preview',
+    'change-verification',
     'humanize-ko',
     'cognitive-rhythm-writing',
     'task-doc-writing',
@@ -255,6 +259,66 @@ function Assert-JunctionTarget {
     Assert-True ($actual -ieq $expected) ('junction target이 다릅니다: ' + $Path)
 }
 
+function Assert-StatefulLegacyUninstall {
+    param(
+        [string]$Label,
+        [string]$StateMarker,
+        [string[]]$OwnedSkills
+    )
+
+    $fixtureRoot = Join-Path $script:testRoot $Label
+    $fixtureHome = Join-Path $fixtureRoot 'User Home'
+    $fixtureVault = Join-Path $fixtureRoot 'Vault'
+    $fixtureStateDirectory = Join-Path $fixtureHome '.ai-session-kit'
+    $fixtureState = Join-Path $fixtureStateDirectory 'install-state'
+    $fixtureRuntime = Join-Path $fixtureStateDirectory 'runtime'
+    $foreignTarget = Join-Path $fixtureRoot 'foreign-guided-debugging'
+    [void](New-Item -ItemType Directory -Path (Join-Path $fixtureRuntime 'skills') -Force)
+    [void](New-Item -ItemType Directory -Path $fixtureVault -Force)
+    [void](New-Item -ItemType Directory -Path $foreignTarget -Force)
+    [System.IO.File]::WriteAllText((Join-Path $foreignTarget 'keep.txt'), 'foreign', $script:utf8NoBom)
+    [System.IO.File]::WriteAllText(
+        (Join-Path $fixtureRuntime '.ai-session-kit-runtime'),
+        "ai-session-kit-runtime-v1`n",
+        $script:utf8NoBom
+    )
+    foreach ($skill in $OwnedSkills) {
+        [void](New-Item -ItemType Directory -Path (Join-Path $fixtureRuntime ('skills\' + $skill)) -Force)
+    }
+    foreach ($root in @((Join-Path $fixtureHome '.claude\skills'), (Join-Path $fixtureHome '.agents\skills'))) {
+        [void](New-Item -ItemType Directory -Path $root -Force)
+        foreach ($skill in $OwnedSkills) {
+            [void](New-Item -ItemType Junction -Path (Join-Path $root $skill) -Target (Join-Path $fixtureRuntime ('skills\' + $skill)))
+        }
+        [void](New-Item -ItemType Junction -Path (Join-Path $root 'guided-debugging') -Target $foreignTarget)
+    }
+    $stateLines = @($StateMarker, $fixtureVault)
+    if ($StateMarker -eq 'ai-session-kit-state-v2') {
+        $stateLines += @('legacy-session-command', 'legacy-pii-command')
+    }
+    [System.IO.File]::WriteAllText($fixtureState, (($stateLines -join "`n") + "`n"), $script:utf8NoBom)
+
+    $previousHome = $env:AI_SESSION_KIT_USER_HOME
+    try {
+        $env:AI_SESSION_KIT_USER_HOME = $fixtureHome
+        $result = Invoke-ChildPowerShell -ScriptPath $script:uninstallScript
+        Assert-True ($result.Status -eq 0) ($StateMarker + ' legacy uninstall 실패: ' + $result.Stderr + $result.Stdout)
+    }
+    finally {
+        $env:AI_SESSION_KIT_USER_HOME = $previousHome
+    }
+    Assert-True (-not (Test-Path -LiteralPath $fixtureState)) ($StateMarker + ' uninstall이 install-state를 남겼습니다.')
+    Assert-True (-not (Test-Path -LiteralPath $fixtureRuntime)) ($StateMarker + ' uninstall이 runtime을 남겼습니다.')
+    foreach ($root in @((Join-Path $fixtureHome '.claude\skills'), (Join-Path $fixtureHome '.agents\skills'))) {
+        foreach ($skill in $OwnedSkills) {
+            $remainingOwnedItem = Get-Item -LiteralPath (Join-Path $root $skill) -Force -ErrorAction SilentlyContinue
+            Assert-True ($null -eq $remainingOwnedItem) ($StateMarker + ' uninstall이 owned skill을 남겼습니다: ' + $skill)
+        }
+        Assert-JunctionTarget -Path (Join-Path $root 'guided-debugging') -ExpectedTarget $foreignTarget
+    }
+    Assert-True ([System.IO.File]::ReadAllText((Join-Path $foreignTarget 'keep.txt')) -eq 'foreign') 'legacy uninstall이 foreign new-name skill을 변경했습니다.'
+}
+
 function Assert-DenyResult {
     param(
         [object]$Result,
@@ -353,9 +417,33 @@ try {
     Assert-True (Test-Path -LiteralPath (Join-Path $runtime 'hooks\session-context.ps1') -PathType Leaf) 'Windows SessionStart hook이 설치되지 않았습니다.'
     Assert-True (Test-Path -LiteralPath (Join-Path $runtime 'hooks\check-pii.ps1') -PathType Leaf) 'Windows PII hook이 설치되지 않았습니다.'
     $stateLines = [System.IO.File]::ReadAllLines($stateFile)
-    Assert-True ($stateLines.Length -ge 4) 'install-state 형식이 잘못됐습니다.'
-    Assert-True ($stateLines[0] -eq 'ai-session-kit-state-v2') 'install-state marker가 다릅니다.'
+    Assert-True ($stateLines.Length -eq (6 + $skills.Count)) 'install-state 형식이 잘못됐습니다.'
+    Assert-True ($stateLines[0] -eq 'ai-session-kit-state-v3') 'install-state marker가 다릅니다.'
     Assert-True ($stateLines[1] -ieq [System.IO.Path]::GetFullPath($vaultA)) 'install-state vault가 다릅니다.'
+    Assert-True ($stateLines[4] -eq 'ai-session-kit-owned-skills-v1') 'install-state skill manifest marker가 다릅니다.'
+    Assert-True ([int]$stateLines[5] -eq $skills.Count) 'install-state skill manifest 개수가 다릅니다.'
+    for ($skillIndex = 0; $skillIndex -lt $skills.Count; $skillIndex += 1) {
+        Assert-True ($stateLines[$skillIndex + 6] -eq $skills[$skillIndex]) 'install-state skill manifest 순서가 다릅니다.'
+    }
+    Assert-True ([System.IO.File]::ReadAllText((Join-Path $runtime '.ai-session-kit-runtime')).Trim() -eq 'ai-session-kit-runtime-v2') 'runtime marker가 다릅니다.'
+
+    $oldUninstallScript = Join-Path $testRoot 'uninstall-v2-fixture.ps1'
+    $oldUninstallContent = @'
+$homePath = $env:AI_SESSION_KIT_USER_HOME
+$statePath = Join-Path $homePath '.ai-session-kit\install-state'
+$marker = [System.IO.File]::ReadAllLines($statePath)[0]
+if ($marker -ne 'ai-session-kit-state-v1' -and $marker -ne 'ai-session-kit-state-v2') {
+    [Console]::Error.WriteLine('unsupported install state')
+    exit 1
+}
+[System.IO.Directory]::Delete((Join-Path $homePath '.claude\skills\session-start'))
+'@
+    [System.IO.File]::WriteAllText($oldUninstallScript, $oldUninstallContent, $utf8NoBom)
+    $stateBeforeOldUninstall = [System.IO.File]::ReadAllText($stateFile)
+    $oldUninstall = Invoke-ChildPowerShell -ScriptPath $oldUninstallScript
+    Assert-True ($oldUninstall.Status -ne 0) 'v2 uninstaller가 v3 install-state를 수락했습니다.'
+    Assert-True ([System.IO.File]::ReadAllText($stateFile) -ceq $stateBeforeOldUninstall) 'v2 uninstaller가 v3 install-state를 변경했습니다.'
+    Assert-JunctionTarget -Path (Join-Path $userHome '.claude\skills\session-start') -ExpectedTarget (Join-Path $runtime 'skills\session-start')
 
     foreach ($root in @((Join-Path $userHome '.claude\skills'), (Join-Path $userHome '.agents\skills'))) {
         foreach ($skill in $skills) {
@@ -396,15 +484,19 @@ try {
     Assert-True ($sessionFromClaudeCommand.Status -eq 0) ('Claude PowerShell hook command 실패: ' + $sessionFromClaudeCommand.Stderr)
     $sessionJson = $sessionFromClaudeCommand.Stdout | ConvertFrom-Json
     $context = [string]$sessionJson.hookSpecificOutput.additionalContext
-    Assert-True ($context.Contains('260819_windows-task.md')) 'SessionStart가 진행 중 task를 주입하지 않았습니다.'
+    Assert-True ($context.Contains('진행 중 태스크: 1건')) 'SessionStart가 진행 중 task count를 주입하지 않았습니다.'
+    Assert-True ($context.Contains('current project를 확인한 뒤 matching task만 조회')) 'SessionStart project 격리 안내가 없습니다.'
+    Assert-True (-not $context.Contains('260819_windows-task.md')) 'SessionStart가 project 확인 전에 task filename을 노출했습니다.'
+    Assert-True (-not $context.Contains('recent.md')) 'SessionStart가 project 확인 전에 recent filename을 노출했습니다.'
     Assert-True (-not $context.Contains('private.person@corp.invalid')) 'SessionStart가 민감 filename을 노출했습니다.'
     Assert-True (-not $context.Contains('archived.md')) 'SessionStart가 archived 문서를 주입했습니다.'
-    Assert-True ($context.Contains('민감정보 가능성이 있는 파일명 1건 숨김')) 'SessionStart filename redaction count가 없습니다.'
+    Assert-True ($context.Contains('session-end skill의 제안 mode를 대화당 한 번만 적용')) 'SessionStart가 session-end 1회 제안 규칙을 주입하지 않았습니다.'
+    Assert-True ($context.Contains('제안에 동의한 뒤에만 기록')) 'SessionStart가 session-end 동의 경계를 주입하지 않았습니다.'
 
     $sessionFromWindows = Invoke-WindowsHookCommand -Command ([string]$codexSessionHandlers[0].commandWindows) -InputText '{}'
     Assert-True ($sessionFromWindows.Status -eq 0) ('Codex commandWindows 실패: ' + $sessionFromWindows.Stderr)
     $windowsSessionJson = $sessionFromWindows.Stdout | ConvertFrom-Json
-    Assert-True ([string]$windowsSessionJson.hookSpecificOutput.additionalContext -like '*260819_windows-task.md*') 'commandWindows가 custom vault를 로드하지 못했습니다.'
+    Assert-True ([string]$windowsSessionJson.hookSpecificOutput.additionalContext -like '*진행 중 태스크: 1건*') 'commandWindows가 custom vault task count를 로드하지 못했습니다.'
 
     $piiHook = Join-Path $runtime 'hooks\check-pii.ps1'
     $secretValue = 'not-for-output-1234567890'
@@ -450,7 +542,7 @@ try {
         $staleEnvironmentSession = Invoke-WindowsHookCommand -Command ([string]$codexSessionHandlers[0].commandWindows) -InputText '{}'
         Assert-True ($staleEnvironmentSession.Status -eq 0) ('stale env SessionStart commandWindows 실패: ' + $staleEnvironmentSession.Stderr)
         $staleEnvironmentContext = [string](($staleEnvironmentSession.Stdout | ConvertFrom-Json).hookSpecificOutput.additionalContext)
-        Assert-True ($staleEnvironmentContext.Contains('260819_windows-task.md')) 'explicit installed state가 stale SessionStart env보다 우선되지 않았습니다.'
+        Assert-True ($staleEnvironmentContext.Contains('진행 중 태스크: 1건')) 'explicit installed state가 stale SessionStart env보다 우선되지 않았습니다.'
 
         $claudeSafeResult = Invoke-PowerShellHookCommand -Command ([string]$claudePiiHandlers[0].command) -InputText $registeredSafePayload
         Assert-True ($claudeSafeResult.Status -eq 0 -and [string]::IsNullOrWhiteSpace($claudeSafeResult.Stdout)) 'Claude registered PII command safe allow 실패'
@@ -765,6 +857,71 @@ try {
     Assert-True (@(Get-HookHandlers $afterCodex 'SessionStart' | Where-Object { $_.command -eq 'Write-Output foreign-codex-session' }).Count -eq 1) 'uninstall이 Codex foreign hook을 지웠습니다.'
     Assert-True (@(Get-OwnedHandlers $afterClaude 'SessionStart' 'session-context.ps1').Count -eq 0) 'uninstall이 Claude owned hook을 남겼습니다.'
     Assert-True (@(Get-OwnedHandlers $afterCodex 'SessionStart' 'session-context.ps1').Count -eq 0) 'uninstall이 Codex owned hook을 남겼습니다.'
+
+    Assert-StatefulLegacyUninstall -Label 'State v1 uninstall' -StateMarker 'ai-session-kit-state-v1' -OwnedSkills @(
+        'session-start', 'session-end', 'kb-lookup', 'kb-routing'
+    )
+    $legacyV2Skills = @(
+        'session-start',
+        'session-end',
+        'kb-lookup',
+        'kb-routing',
+        'humanize-ko',
+        'cognitive-rhythm-writing',
+        'task-doc-writing',
+        'weekly-summary',
+        'monthly-summary'
+    )
+    Assert-StatefulLegacyUninstall -Label 'State v2 uninstall' -StateMarker 'ai-session-kit-state-v2' -OwnedSkills $legacyV2Skills
+
+    $manifestDriftHome = Join-Path $testRoot 'Manifest Drift Home'
+    $manifestDriftVault = Join-Path $testRoot 'Manifest Drift Vault'
+    $manifestDriftStateDirectory = Join-Path $manifestDriftHome '.ai-session-kit'
+    $manifestDriftState = Join-Path $manifestDriftStateDirectory 'install-state'
+    $manifestDriftRuntime = Join-Path $manifestDriftStateDirectory 'runtime'
+    $retiredSkillTarget = Join-Path $manifestDriftRuntime 'skills\retired-skill'
+    $retiredSkillJunction = Join-Path $manifestDriftHome '.claude\skills\retired-skill'
+    $manifestDriftForeign = Join-Path $testRoot 'Manifest Drift Foreign Skill'
+    $manifestDriftForeignJunction = Join-Path $manifestDriftHome '.agents\skills\guided-debugging'
+    [void](New-Item -ItemType Directory -Path $retiredSkillTarget -Force)
+    [void](New-Item -ItemType Directory -Path $manifestDriftVault -Force)
+    [void](New-Item -ItemType Directory -Path $manifestDriftForeign -Force)
+    [System.IO.File]::WriteAllText((Join-Path $manifestDriftForeign 'keep.txt'), 'foreign', $utf8NoBom)
+    [System.IO.File]::WriteAllText(
+        (Join-Path $manifestDriftRuntime '.ai-session-kit-runtime'),
+        "ai-session-kit-runtime-v2`n",
+        $utf8NoBom
+    )
+    [System.IO.Directory]::CreateDirectory((Split-Path -Parent $retiredSkillJunction)) | Out-Null
+    [void](New-Item -ItemType Junction -Path $retiredSkillJunction -Target $retiredSkillTarget)
+    [System.IO.Directory]::CreateDirectory((Split-Path -Parent $manifestDriftForeignJunction)) | Out-Null
+    [void](New-Item -ItemType Junction -Path $manifestDriftForeignJunction -Target $manifestDriftForeign)
+    $manifestDriftContent = @(
+        'ai-session-kit-state-v3',
+        $manifestDriftVault,
+        'session-command',
+        'pii-command',
+        'ai-session-kit-owned-skills-v1',
+        '1',
+        'retired-skill'
+    ) -join "`n"
+    [System.IO.File]::WriteAllText($manifestDriftState, ($manifestDriftContent + "`n"), $utf8NoBom)
+    $manifestDriftStateBefore = [System.IO.File]::ReadAllText($manifestDriftState)
+    $env:AI_SESSION_KIT_USER_HOME = $manifestDriftHome
+    $manifestDriftInstall = Invoke-ChildPowerShell -ScriptPath $setupScript -Arguments @('-VaultPath', $manifestDriftVault)
+    Assert-True ($manifestDriftInstall.Status -ne 0) '현재 목록과 다른 v3 manifest에서 setup이 성공했습니다.'
+    Assert-True (($manifestDriftInstall.Stderr + $manifestDriftInstall.Stdout).Contains('기존 v3 skill manifest가 현재 설치 목록과 달라')) 'manifest drift 중단 이유가 없습니다.'
+    Assert-True ([System.IO.File]::ReadAllText($manifestDriftState) -ceq $manifestDriftStateBefore) 'manifest drift setup이 install-state를 변경했습니다.'
+    Assert-JunctionTarget -Path $retiredSkillJunction -ExpectedTarget $retiredSkillTarget
+    Assert-True (Test-Path -LiteralPath $manifestDriftRuntime -PathType Container) 'manifest drift setup이 runtime을 변경했습니다.'
+    $manifestDriftUninstall = Invoke-ChildPowerShell -ScriptPath $uninstallScript
+    Assert-True ($manifestDriftUninstall.Status -eq 0) ('recorded v3 manifest uninstall 실패: ' + $manifestDriftUninstall.Stderr + $manifestDriftUninstall.Stdout)
+    Assert-True (-not (Test-Path -LiteralPath $manifestDriftState)) 'recorded v3 manifest uninstall이 state를 남겼습니다.'
+    Assert-True (-not (Test-Path -LiteralPath $manifestDriftRuntime)) 'recorded v3 manifest uninstall이 runtime을 남겼습니다.'
+    Assert-True ($null -eq (Get-Item -LiteralPath $retiredSkillJunction -Force -ErrorAction SilentlyContinue)) 'recorded v3 manifest uninstall이 owned junction을 남겼습니다.'
+    Assert-JunctionTarget -Path $manifestDriftForeignJunction -ExpectedTarget $manifestDriftForeign
+    Assert-True ([System.IO.File]::ReadAllText((Join-Path $manifestDriftForeign 'keep.txt')) -eq 'foreign') 'recorded v3 manifest uninstall이 foreign skill을 변경했습니다.'
+    $env:AI_SESSION_KIT_USER_HOME = $userHome
 
     $conflictHome = Join-Path $testRoot 'Conflict Home'
     $conflictTarget = Join-Path $conflictHome '.agents\skills\session-start'

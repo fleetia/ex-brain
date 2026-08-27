@@ -13,7 +13,7 @@ description: 설정된 지식 vault에 Markdown 문서를 생성·이동·정리
 2. **활성 지식은 정확히 한 곳에만 둔다.** 같은 내용을 두 존에 복사하지 않는다.
 3. **대체된 문서는 지우지 않는다.** frontmatter를 `status: archived`로 바꾸고 문서 상단에 대체 문서 링크를 남긴다. INDEX의 `Archived` 섹션으로 옮기고, 활성 wiki 문서가 이 파일을 가리키던 링크는 대체 문서로 바꿔 현재 지식과 분리한다. 과거 작업 맥락을 보존하는 `00.memory/` 링크는 그대로 둘 수 있다. 삭제는 사용자가 명시적으로 요청할 때만.
 4. **이동하면 링크를 고친다.** 파일을 옮기기 전에 `00.memory/`, `10.notes/`, `20.work/`에서 파일명을 grep해서 이 파일을 가리키는 링크를 먼저 고치고, 해당 존 INDEX를 갱신한다. `90.private/`는 사용자가 명시적으로 요청한 경우에만 확인한다.
-5. **파일명에 사람 이름을 넣지 않는다.** 파일명은 세션 시작 시 자동으로 컨텍스트에 주입된다.
+5. **파일명에 사람 이름을 넣지 않는다.** SessionStart hook은 파일명을 자동 주입하지 않지만, 사용자가 기록을 찾거나 공유할 때 검색 결과로 보일 수 있다.
 6. **문서 하나를 추가할 때는 그 존의 INDEX만 갱신한다.** 사용자가 재정비를 요청하지 않는 한 다른 폴더·INDEX를 대량 생성하거나 고치지 않는다.
 
 ## Zone Contract
@@ -50,7 +50,8 @@ status: active
 ```
 
 - `status`: `active`(현재 유효) | `archived`(대체됨·더 이상 유효하지 않음). `archived`는 기본 조회에서 제외하고 역사 확인 요청에만 사용한다.
-- 태스크 파일(`00.memory/tasks/`)은 session-end skill의 별도 스키마(`status: todo | in-progress | done | cancelled`)를 따른다. `cancelled`는 완료가 아니라 사용자가 중단을 확정한 일이다. 폴더 위치와 status는 일치해야 한다.
+- 특정 codebase에 종속된 `20.work` 문서는 [project identity 규칙](references/project-identity.md)을 읽고 canonical `project`를 quoted string으로 추가한다. 여러 project에 공통으로 적용되는 팀 프로세스·일반 지식에는 억지로 추가하지 않는다.
+- 태스크 파일(`00.memory/tasks/`)은 session-end skill의 별도 스키마(`status: todo | in-progress | done | cancelled`)를 따른다. code·config를 다룬 개발 태스크의 source snapshot도 그 skill의 `source-revision`·`working-copy-state`·`## 작업 사본` 규칙을 따른다. `cancelled`는 완료가 아니라 사용자가 중단을 확정한 일이다. 폴더 위치와 status는 일치해야 한다.
 
 ## Link Convention
 

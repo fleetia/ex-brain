@@ -4,11 +4,29 @@ param()
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$StateMarker = 'ai-session-kit-state-v2'
+$StateMarker = 'ai-session-kit-state-v3'
+$PreviousStateMarker = 'ai-session-kit-state-v2'
 $LegacyStateMarker = 'ai-session-kit-state-v1'
+$StateSkillsMarker = 'ai-session-kit-owned-skills-v1'
 $RuntimeMarker = '.ai-session-kit-runtime'
-$RuntimeMarkerContent = 'ai-session-kit-runtime-v1'
+$RuntimeMarkerContent = 'ai-session-kit-runtime-v2'
+$LegacyRuntimeMarkerContent = 'ai-session-kit-runtime-v1'
 $Skills = @(
+  'session-start',
+  'session-end',
+  'kb-lookup',
+  'kb-routing',
+  'guided-development',
+  'guided-debugging',
+  'project-run-and-preview',
+  'change-verification',
+  'humanize-ko',
+  'cognitive-rhythm-writing',
+  'task-doc-writing',
+  'weekly-summary',
+  'monthly-summary'
+)
+$LegacyStateSkills = @(
   'session-start',
   'session-end',
   'kb-lookup',
@@ -581,7 +599,8 @@ if ($null -eq $stateItem -or $stateItem.PSIsContainer -or (Test-ReparsePoint $st
 }
 $stateLines = @([System.IO.File]::ReadAllLines($stateFile))
 $originalStateContent = [System.IO.File]::ReadAllText($stateFile)
-if ($stateLines.Count -lt 2 -or ($stateLines[0] -ne $StateMarker -and $stateLines[0] -ne $LegacyStateMarker)) {
+if ($stateLines.Count -lt 2 -or
+  ($stateLines[0] -ne $StateMarker -and $stateLines[0] -ne $PreviousStateMarker -and $stateLines[0] -ne $LegacyStateMarker)) {
   Fail "설치 상태 파일 형식을 확인할 수 없습니다: $stateFile"
 }
 $installedVault = Get-NormalizedPath $stateLines[1]
@@ -593,8 +612,33 @@ if ($stateLines.Count -ge 3) {
 if ($stateLines.Count -ge 4) {
   $installedPiiCommand = $stateLines[3]
 }
-if ($stateLines[0] -eq $StateMarker -and ([string]::IsNullOrEmpty($installedSessionCommand) -or [string]::IsNullOrEmpty($installedPiiCommand))) {
+if (($stateLines[0] -eq $StateMarker -or $stateLines[0] -eq $PreviousStateMarker) -and
+  ([string]::IsNullOrEmpty($installedSessionCommand) -or [string]::IsNullOrEmpty($installedPiiCommand))) {
   Fail "설치 상태에 exact hook command가 없습니다: $stateFile"
+}
+
+$ownedSkills = @()
+$expectedRuntimeMarkerContent = $LegacyRuntimeMarkerContent
+if ($stateLines[0] -eq $StateMarker) {
+  $stateSkillCount = 0
+  if ($stateLines.Count -lt 6 -or $stateLines[4] -ne $StateSkillsMarker -or
+    -not [int]::TryParse($stateLines[5], [ref]$stateSkillCount) -or $stateSkillCount -le 0 -or
+    $stateLines.Count -ne ($stateSkillCount + 6)) {
+    Fail "설치 상태의 skill manifest를 확인할 수 없습니다: $stateFile"
+  }
+  $seenStateSkills = @{}
+  for ($stateSkillIndex = 0; $stateSkillIndex -lt $stateSkillCount; $stateSkillIndex += 1) {
+    $stateSkillName = $stateLines[$stateSkillIndex + 6]
+    if ($stateSkillName -notmatch '^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$' -or $seenStateSkills.ContainsKey($stateSkillName)) {
+      Fail "설치 상태의 skill manifest에 유효하지 않거나 중복된 항목이 있습니다: $stateFile"
+    }
+    $seenStateSkills[$stateSkillName] = $true
+    $ownedSkills += $stateSkillName
+  }
+  $expectedRuntimeMarkerContent = $RuntimeMarkerContent
+}
+else {
+  $ownedSkills = @($LegacyStateSkills)
 }
 
 $legacySessionBare = Join-Path $installedVault '_kit\hooks\session-context.sh'
@@ -607,7 +651,7 @@ $ownedPiiCommands = @($installedPiiCommand, $legacyPiiBare, $legacyPiiCommand) |
 $skillSnapshots = New-Object System.Collections.ArrayList
 $preflightFailed = $false
 foreach ($skillRoot in $skillRoots) {
-  foreach ($skill in $Skills) {
+  foreach ($skill in $ownedSkills) {
     $path = Join-Path $skillRoot $skill
     $expected = Join-Path (Join-Path $runtimeDirectory 'skills') $skill
     $legacyExpected = Join-Path (Join-Path $installedVault '_kit\skills') $skill
@@ -636,7 +680,7 @@ if ($null -ne $runtimeItem) {
   if ($null -ne $markerItem -and -not $markerItem.PSIsContainer -and -not (Test-ReparsePoint $markerItem)) {
     $markerValue = [System.IO.File]::ReadAllText($markerPath).TrimEnd([char[]]@([char]13, [char]10))
   }
-  if (-not $runtimeItem.PSIsContainer -or (Test-ReparsePoint $runtimeItem) -or $markerValue -ne $RuntimeMarkerContent) {
+  if (-not $runtimeItem.PSIsContainer -or (Test-ReparsePoint $runtimeItem) -or $markerValue -ne $expectedRuntimeMarkerContent) {
     [Console]::Error.WriteLine("✗ installer 소유 runtime으로 확인되지 않아 제거하지 않습니다: $runtimeDirectory")
     $preflightFailed = $true
   }

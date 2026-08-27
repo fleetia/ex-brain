@@ -7,10 +7,13 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$StateMarker = 'ai-session-kit-state-v2'
+$StateMarker = 'ai-session-kit-state-v3'
+$PreviousStateMarker = 'ai-session-kit-state-v2'
 $LegacyStateMarker = 'ai-session-kit-state-v1'
+$StateSkillsMarker = 'ai-session-kit-owned-skills-v1'
 $RuntimeMarker = '.ai-session-kit-runtime'
-$RuntimeMarkerContent = 'ai-session-kit-runtime-v1'
+$RuntimeMarkerContent = 'ai-session-kit-runtime-v2'
+$LegacyRuntimeMarkerContent = 'ai-session-kit-runtime-v1'
 $SystemPowerShell = [System.IO.Path]::Combine(
   [Environment]::SystemDirectory,
   'WindowsPowerShell',
@@ -22,6 +25,10 @@ $Skills = @(
   'session-end',
   'kb-lookup',
   'kb-routing',
+  'guided-development',
+  'guided-debugging',
+  'project-run-and-preview',
+  'change-verification',
   'humanize-ko',
   'cognitive-rhythm-writing',
   'task-doc-writing',
@@ -667,7 +674,8 @@ if ($null -ne $stateItem) {
     Fail "설치 상태 파일이 손상되었습니다: $stateFile"
   }
   $stateLines = @([System.IO.File]::ReadAllLines($stateFile))
-  if ($stateLines.Count -lt 2 -or ($stateLines[0] -ne $StateMarker -and $stateLines[0] -ne $LegacyStateMarker)) {
+  if ($stateLines.Count -lt 2 -or
+    ($stateLines[0] -ne $StateMarker -and $stateLines[0] -ne $PreviousStateMarker -and $stateLines[0] -ne $LegacyStateMarker)) {
     Fail "설치 상태 파일 형식을 확인할 수 없습니다: $stateFile"
   }
   $oldVault = Get-NormalizedPath $stateLines[1]
@@ -677,8 +685,33 @@ if ($null -ne $stateItem) {
   if ($stateLines.Count -ge 4) {
     $previousPiiCommand = $stateLines[3]
   }
-  if ($stateLines[0] -eq $StateMarker -and ([string]::IsNullOrEmpty($previousSessionCommand) -or [string]::IsNullOrEmpty($previousPiiCommand))) {
+  if (($stateLines[0] -eq $StateMarker -or $stateLines[0] -eq $PreviousStateMarker) -and
+    ([string]::IsNullOrEmpty($previousSessionCommand) -or [string]::IsNullOrEmpty($previousPiiCommand))) {
     Fail "설치 상태에 exact hook command가 없습니다: $stateFile"
+  }
+  if ($stateLines[0] -eq $StateMarker) {
+    $stateSkillCount = 0
+    if ($stateLines.Count -lt 6 -or $stateLines[4] -ne $StateSkillsMarker -or
+      -not [int]::TryParse($stateLines[5], [ref]$stateSkillCount) -or $stateSkillCount -le 0 -or
+      $stateLines.Count -ne ($stateSkillCount + 6)) {
+      Fail "설치 상태의 skill manifest를 확인할 수 없습니다: $stateFile"
+    }
+    $seenStateSkills = @{}
+    for ($stateSkillIndex = 0; $stateSkillIndex -lt $stateSkillCount; $stateSkillIndex += 1) {
+      $stateSkillName = $stateLines[$stateSkillIndex + 6]
+      if ($stateSkillName -notmatch '^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$' -or $seenStateSkills.ContainsKey($stateSkillName)) {
+        Fail "설치 상태의 skill manifest에 유효하지 않거나 중복된 항목이 있습니다: $stateFile"
+      }
+      $seenStateSkills[$stateSkillName] = $true
+    }
+    if ($stateSkillCount -ne $Skills.Count) {
+      Fail "기존 v3 skill manifest가 현재 설치 목록과 달라 자동 업그레이드를 중단합니다. 설치에 사용한 버전의 uninstaller로 먼저 제거하세요: $stateFile"
+    }
+    for ($stateSkillIndex = 0; $stateSkillIndex -lt $stateSkillCount; $stateSkillIndex += 1) {
+      if (-not [string]::Equals($stateLines[$stateSkillIndex + 6], $Skills[$stateSkillIndex], [System.StringComparison]::Ordinal)) {
+        Fail "기존 v3 skill manifest가 현재 설치 목록과 달라 자동 업그레이드를 중단합니다. 설치에 사용한 버전의 uninstaller로 먼저 제거하세요: $stateFile"
+      }
+    }
   }
 }
 
@@ -774,7 +807,8 @@ if ($null -ne $runtimeItem) {
   if ($null -ne $runtimeMarkerItem -and -not $runtimeMarkerItem.PSIsContainer -and -not (Test-ReparsePoint $runtimeMarkerItem)) {
     $runtimeMarkerValue = [System.IO.File]::ReadAllText($runtimeMarkerPath).TrimEnd([char[]]@([char]13, [char]10))
   }
-  if (-not $runtimeItem.PSIsContainer -or (Test-ReparsePoint $runtimeItem) -or $runtimeMarkerValue -ne $RuntimeMarkerContent) {
+  if (-not $runtimeItem.PSIsContainer -or (Test-ReparsePoint $runtimeItem) -or
+    ($runtimeMarkerValue -ne $RuntimeMarkerContent -and $runtimeMarkerValue -ne $LegacyRuntimeMarkerContent)) {
     Fail "installer 소유 marker가 없는 runtime을 보존했습니다: $runtimeDirectory"
   }
   foreach ($runtimeNode in Get-ChildItem -LiteralPath $runtimeDirectory -Recurse -Force) {
@@ -926,7 +960,15 @@ try {
   Write-Host '✓ Claude + Codex skill junction 설치·검증 완료'
 
   $stateTemporary = Join-Path $stateDirectory ('.install-state.{0}.tmp' -f [guid]::NewGuid().ToString('N'))
-  $stateContent = @($StateMarker, $vault, $sessionCommand, $piiCommand) -join "`n"
+  $stateContentLines = @(
+    $StateMarker,
+    $vault,
+    $sessionCommand,
+    $piiCommand,
+    $StateSkillsMarker,
+    [string]$Skills.Count
+  ) + $Skills
+  $stateContent = $stateContentLines -join "`n"
   Write-Utf8File $stateTemporary ($stateContent + "`n")
   Move-FileAtomically $stateTemporary $stateFile
   $stateTemporary = ''
@@ -965,9 +1007,9 @@ try {
 
   Write-Host ''
   Write-Host '설치 후 확인:'
-  Write-Host '- Claude: 새 세션에서 SessionStart hook이 진행 중 작업을 로드합니다.'
+  Write-Host '- Claude: 새 세션에서 SessionStart hook이 진행 중 작업 개수만 안내합니다.'
   Write-Host '- Codex: /hooks에서 새 command hook 정의를 검토하고 trust해야 실행됩니다.'
-  Write-Host '- 세션을 마칠 때 "세션 종료해줘"라고 요청해 session-end skill을 실행하세요.'
+  Write-Host '- 세션 기록은 자동 저장되지 않습니다. 직접 "세션 종료해줘"라고 말하거나, AI가 안전하게 끊을 수 있는 지점에서 정리를 제안하면 동의하세요.'
 }
 catch {
   $installError = $_.Exception.Message

@@ -9,14 +9,18 @@ CLAUDE_SETTINGS="$CLAUDE_DIR/settings.json"
 CODEX_HOOKS="$USER_HOME/.codex/hooks.json"
 STATE_DIR="$USER_HOME/.ai-session-kit"
 STATE_FILE="$STATE_DIR/install-state"
-STATE_MARKER="ai-session-kit-state-v2"
+STATE_MARKER="ai-session-kit-state-v3"
+PREVIOUS_STATE_MARKER="ai-session-kit-state-v2"
 LEGACY_STATE_MARKER="ai-session-kit-state-v1"
+STATE_SKILLS_MARKER="ai-session-kit-owned-skills-v1"
 RUNTIME_DIR="$STATE_DIR/runtime"
 RUNTIME_MARKER=".ai-session-kit-runtime"
-RUNTIME_MARKER_CONTENT="ai-session-kit-runtime-v1"
+RUNTIME_MARKER_CONTENT="ai-session-kit-runtime-v2"
+LEGACY_RUNTIME_MARKER_CONTENT="ai-session-kit-runtime-v1"
 SESSION_HOOK_MARKER="AI_SESSION_KIT_HOOK=session-context"
 PII_HOOK_MARKER="AI_SESSION_KIT_HOOK=check-pii"
-SKILLS=(session-start session-end kb-lookup kb-routing humanize-ko cognitive-rhythm-writing task-doc-writing weekly-summary monthly-summary)
+SKILLS=(session-start session-end kb-lookup kb-routing guided-development guided-debugging project-run-and-preview change-verification humanize-ko cognitive-rhythm-writing task-doc-writing weekly-summary monthly-summary)
+LEGACY_STATE_SKILLS=(session-start session-end kb-lookup kb-routing humanize-ko cognitive-rhythm-writing task-doc-writing weekly-summary monthly-summary)
 SKILL_ROOTS=("$CLAUDE_DIR/skills" "$USER_HOME/.agents/skills")
 ts="$(date +%Y%m%d%H%M%S)"
 result=0
@@ -60,24 +64,65 @@ esac
 INSTALLED_VAULT=""
 INSTALLED_SESSION_COMMAND=""
 INSTALLED_PII_COMMAND=""
+OWNED_SKILLS=()
+EXPECTED_RUNTIME_MARKER_CONTENT=""
 has_valid_state=0
 if [ -e "$STATE_FILE" ] || [ -L "$STATE_FILE" ]; then
   if [ -f "$STATE_FILE" ] && [ ! -L "$STATE_FILE" ]; then
-    state_marker=""
-    IFS= read -r state_marker < "$STATE_FILE" || true
-    INSTALLED_VAULT="$(sed -n '2p' "$STATE_FILE")"
-    INSTALLED_SESSION_COMMAND="$(sed -n '3p' "$STATE_FILE")"
-    INSTALLED_PII_COMMAND="$(sed -n '4p' "$STATE_FILE")"
-    if { [ "$state_marker" = "$STATE_MARKER" ] || [ "$state_marker" = "$LEGACY_STATE_MARKER" ]; } &&
-      [ -n "$INSTALLED_VAULT" ] &&
-      { [ "$state_marker" = "$LEGACY_STATE_MARKER" ] ||
-        { [ -n "$INSTALLED_SESSION_COMMAND" ] && [ -n "$INSTALLED_PII_COMMAND" ]; }; }; then
+    state_lines=()
+    while IFS= read -r state_line || [ -n "$state_line" ]; do
+      state_lines[${#state_lines[@]}]="$state_line"
+    done < "$STATE_FILE"
+    state_marker="${state_lines[0]:-}"
+    INSTALLED_VAULT="${state_lines[1]:-}"
+    INSTALLED_SESSION_COMMAND="${state_lines[2]:-}"
+    INSTALLED_PII_COMMAND="${state_lines[3]:-}"
+    if [ -n "$INSTALLED_VAULT" ]; then
       case "$INSTALLED_VAULT" in
         /*) has_valid_state=1 ;;
       esac
       case "$INSTALLED_VAULT" in
         *$'\n'*|*$'\r'*|*$'\t'*|*'`'*) has_valid_state=0 ;;
       esac
+    fi
+    if [ "$state_marker" = "$STATE_MARKER" ]; then
+      if [ -z "$INSTALLED_SESSION_COMMAND" ] || [ -z "$INSTALLED_PII_COMMAND" ]; then
+        has_valid_state=0
+      fi
+      state_skill_count="${state_lines[5]:-}"
+      case "$state_skill_count" in
+        ''|0*|*[!0-9]*) has_valid_state=0 ;;
+        *)
+          if [ "${state_lines[4]:-}" != "$STATE_SKILLS_MARKER" ] ||
+            [ "${#state_lines[@]}" -ne $((state_skill_count + 6)) ]; then
+            has_valid_state=0
+          else
+            for ((state_skill_index = 0; state_skill_index < state_skill_count; state_skill_index += 1)); do
+              state_skill_name="${state_lines[$((state_skill_index + 6))]}"
+              case "$state_skill_name" in
+                ''|*[!a-z0-9-]*|-*|*-) has_valid_state=0 ;;
+              esac
+              for ((previous_skill_index = 0; previous_skill_index < state_skill_index; previous_skill_index += 1)); do
+                if [ "$state_skill_name" = "${OWNED_SKILLS[$previous_skill_index]}" ]; then
+                  has_valid_state=0
+                fi
+              done
+              OWNED_SKILLS[${#OWNED_SKILLS[@]}]="$state_skill_name"
+            done
+          fi
+          ;;
+      esac
+      EXPECTED_RUNTIME_MARKER_CONTENT="$RUNTIME_MARKER_CONTENT"
+    elif [ "$state_marker" = "$PREVIOUS_STATE_MARKER" ] || [ "$state_marker" = "$LEGACY_STATE_MARKER" ]; then
+      if [ "$state_marker" = "$PREVIOUS_STATE_MARKER" ] &&
+        { [ -z "$INSTALLED_SESSION_COMMAND" ] || [ -z "$INSTALLED_PII_COMMAND" ]; }; then
+        has_valid_state=0
+      fi
+      OWNED_SKILLS=("${LEGACY_STATE_SKILLS[@]}")
+      EXPECTED_RUNTIME_MARKER_CONTENT="$LEGACY_RUNTIME_MARKER_CONTENT"
+    else
+      has_valid_state=0
+      printf '✗ 이 제거 스크립트가 지원하지 않는 설치 상태 버전입니다. 설치에 사용한 버전의 uninstall.sh를 실행하세요: %s\n' "$STATE_FILE" >&2
     fi
   fi
   if [ "$has_valid_state" -ne 1 ]; then
@@ -111,7 +156,7 @@ validate_hook_config() {
 if [ "$has_valid_state" -eq 1 ]; then
   snapshot_index=0
   for root in "${SKILL_ROOTS[@]}"; do
-    for name in "${SKILLS[@]}"; do
+    for name in "${OWNED_SKILLS[@]}"; do
       target="$root/$name"
       expected="$RUNTIME_DIR/skills/$name"
       legacy_expected="$INSTALLED_VAULT/_kit/skills/$name"
@@ -142,7 +187,7 @@ if [ "$has_valid_state" -eq 1 ]; then
   if [ -e "$RUNTIME_DIR" ] || [ -L "$RUNTIME_DIR" ]; then
     if [ -L "$RUNTIME_DIR" ] || [ ! -d "$RUNTIME_DIR" ] ||
       [ -L "$RUNTIME_DIR/$RUNTIME_MARKER" ] || [ ! -f "$RUNTIME_DIR/$RUNTIME_MARKER" ] ||
-      [ "$(cat "$RUNTIME_DIR/$RUNTIME_MARKER")" != "$RUNTIME_MARKER_CONTENT" ]; then
+      [ "$(cat "$RUNTIME_DIR/$RUNTIME_MARKER")" != "$EXPECTED_RUNTIME_MARKER_CONTENT" ]; then
       printf '✗ installer 소유 runtime으로 확인되지 않아 제거하지 않습니다: %s\n' "$RUNTIME_DIR" >&2
       result=1
     else
@@ -336,7 +381,7 @@ restore_wiring() {
     cp -p "$codex_backup" "$CODEX_HOOKS" 2>/dev/null || restore_failed=1
   fi
   for root in "${SKILL_ROOTS[@]}"; do
-    for name in "${SKILLS[@]}"; do
+    for name in "${OWNED_SKILLS[@]}"; do
       if [ "${skill_before_exists[$index]:-0}" -eq 1 ]; then
         target="$root/$name"
         before="${skill_before_target[$index]}"
@@ -387,7 +432,7 @@ restore_runtime_copy() {
   runtime_restore=""
   [ -f "$RUNTIME_DIR/$RUNTIME_MARKER" ] &&
     [ ! -L "$RUNTIME_DIR/$RUNTIME_MARKER" ] &&
-    [ "$(cat "$RUNTIME_DIR/$RUNTIME_MARKER")" = "$RUNTIME_MARKER_CONTENT" ]
+    [ "$(cat "$RUNTIME_DIR/$RUNTIME_MARKER")" = "$EXPECTED_RUNTIME_MARKER_CONTENT" ]
 }
 
 if [ -d "$RUNTIME_DIR" ]; then
@@ -410,7 +455,7 @@ removed=0
 skill_remove_failed=0
 snapshot_index=0
 for root in "${SKILL_ROOTS[@]}"; do
-  for name in "${SKILLS[@]}"; do
+  for name in "${OWNED_SKILLS[@]}"; do
     target="$root/$name"
     if [ "${skill_before_exists[$snapshot_index]:-0}" -eq 1 ]; then
       if rm -- "$target"; then

@@ -180,6 +180,56 @@ for variant in cli app; do
   cmp "vault-template/90.private/README.md" "$ARTIFACTS/$variant/vault-template/90.private/README.md"
 done
 
+(
+  cd "$CHECK_TMP/default-source"
+  find skills -type f -print | LC_ALL=C sort
+) > "$CHECK_TMP/source-skills-manifest.txt"
+(
+  cd "$ARTIFACTS/cli"
+  find skills -type f -print | LC_ALL=C sort
+) > "$CHECK_TMP/artifact-skills-manifest.txt"
+if ! diff -u "$CHECK_TMP/source-skills-manifest.txt" "$CHECK_TMP/artifact-skills-manifest.txt"; then
+  echo "✗ source skill 파일과 실제 CLI artifact가 다릅니다."
+  exit 1
+fi
+
+artifact_user_home="$CHECK_TMP/artifact-install-home"
+artifact_vault="$CHECK_TMP/artifact-install-vault"
+mkdir -p "$artifact_user_home"
+if ! AI_SESSION_KIT_USER_HOME="$artifact_user_home" \
+  "$BASH_BIN" "$ARTIFACTS/cli/setup.sh" "$artifact_vault" > "$CHECK_TMP/artifact-setup.log" 2>&1; then
+  sed -n '1,240p' "$CHECK_TMP/artifact-setup.log" >&2
+  echo "✗ 실제 CLI artifact 설치 smoke test가 실패했습니다."
+  exit 1
+fi
+while IFS= read -r -d '' artifact_skill_dir; do
+  skill_name="${artifact_skill_dir##*/}"
+  for skill_root in "$artifact_user_home/.claude/skills" "$artifact_user_home/.agents/skills"; do
+    skill_link="$skill_root/$skill_name"
+    if [ ! -L "$skill_link" ] || [ ! -e "$skill_link" ]; then
+      echo "✗ 실제 CLI artifact가 skill을 설치하지 않았습니다: $skill_name"
+      exit 1
+    fi
+  done
+done < <(find "$ARTIFACTS/cli/skills" -mindepth 1 -maxdepth 1 -type d -print0)
+
+if ! AI_SESSION_KIT_USER_HOME="$artifact_user_home" \
+  "$BASH_BIN" "$ARTIFACTS/cli/uninstall.sh" > "$CHECK_TMP/artifact-uninstall.log" 2>&1; then
+  sed -n '1,240p' "$CHECK_TMP/artifact-uninstall.log" >&2
+  echo "✗ 실제 CLI artifact 제거 smoke test가 실패했습니다."
+  exit 1
+fi
+while IFS= read -r -d '' artifact_skill_dir; do
+  skill_name="${artifact_skill_dir##*/}"
+  for skill_root in "$artifact_user_home/.claude/skills" "$artifact_user_home/.agents/skills"; do
+    skill_link="$skill_root/$skill_name"
+    if [ -e "$skill_link" ] || [ -L "$skill_link" ]; then
+      echo "✗ 실제 CLI artifact 제거 뒤 skill 연결이 남았습니다: $skill_name"
+      exit 1
+    fi
+  done
+done < <(find "$ARTIFACTS/cli/skills" -mindepth 1 -maxdepth 1 -type d -print0)
+
 workflow=.github/workflows/verify.yml
 test ! -e .github/workflows/release.yml
 test "$(grep -Fc -- 'runs-on: windows-latest' "$workflow")" -eq 1
