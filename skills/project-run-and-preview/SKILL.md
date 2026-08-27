@@ -7,6 +7,8 @@ description: 사용자가 project를 실행해 달라거나 결과를 어디서 
 
 사용자가 command와 port를 추측하지 않아도 현재 project의 결과를 직접 볼 수 있게 한다. 실행 중이라는 log만 보여주지 말고 실제로 어디에서 무엇을 확인할 수 있는지까지 연결한다.
 
+상위 지침이 언어를 정하지 않은 경우 사용자에게 보이는 질문·진행 상황·결과는 사용자가 지정한 언어를 우선하고, 없으면 최근의 의미 있는 사용자 발화 언어를 따른다. 발화가 짧거나 혼합되어 모호하면 이미 형성된 대화 언어를 유지하며, code·command·URL·path·identifier는 번역하지 않는다. 아래 완료 항목은 의미 구조이므로 선택한 응답 언어로 표현한다.
+
 ## Project가 소유한 실행 방법을 찾는다
 
 - 가장 가까운 project instruction과 README, package script, build config에서 entry point와 권장 start command를 확인한다.

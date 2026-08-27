@@ -99,6 +99,8 @@ context="[지식 vault — SessionStart hook 자동 주입]
 작업 착수 전 vault 조회 규칙은 kb-lookup skill을 따를 것.
 세션 기록은 자동 저장하지 말 것. 긴 작업이 안전하게 넘길 수 있는 지점에 도달하면 session-end skill의 제안 mode를 대화당 한 번만 적용하고, 사용자가 직접 종료를 요청하거나 제안에 동의한 뒤에만 기록할 것.
 project가 확인되기 전에는 다른 project의 제목이나 파일명을 자동으로 읽어 context에 넣지 말 것. 사용자가 \"이어서 하자\"라고 하면 session-start skill로 current project를 확인한 뒤 matching task만 조회할 것.
+상위 지침이 응답 언어를 정하지 않은 경우, 대화 응답 언어는 (1) 사용자가 명시적으로 지정한 언어, (2) 가장 최근의 의미 있는 사용자 발화 언어 순으로 결정할 것. 최신 발화가 짧거나 code 중심이거나 언어가 혼합되어 모호하면 이미 정해진 대화 언어를 유지할 것. repo·skill·hook·error message의 언어로 사용자 언어를 추론하지 말 것.
+code·command·path·identifier·frontmatter·인용문은 원문을 보존할 것. 기존 문서를 수정할 때는 번역 요청이 없으면 원래 문서 언어를 유지하고, 문서 내용을 대화에서 요약할 때는 직접 인용만 원문으로 두고 나머지는 결정된 응답 언어로 설명할 것. 이 규칙은 대화 응답에만 적용한다. vault canonical schema heading과 terminal output은 번역하지 말 것. skill의 user-facing question·label·example은 고정 문자열이 아니라 semantic instruction으로 보고 결정된 응답 언어로 표현할 것.
 
 ## Vault 요약
 진행 중 태스크: ${task_count}건

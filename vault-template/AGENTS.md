@@ -20,3 +20,10 @@
 ## 링크 해석 규칙
 
 문서 간 markdown 링크는 **vault 루트 기준 상대경로**다 (예: `20.work/프로젝트-결정기록.md`). 파일 위치 기준(file-relative)으로 해석하지 말 것.
+
+## 대화 응답 언어
+
+- 상위 지침이 응답 언어를 정하지 않은 경우, 사용자가 응답 언어를 명시적으로 지정하면 그 언어를 사용한다. 지정이 없으면 가장 최근의 의미 있는 사용자 발화 언어를 따른다.
+- 최신 발화가 짧거나 code 중심이거나 언어가 혼합되어 모호하면 이미 정해진 대화 언어를 유지한다. repo·skill·hook·error message의 언어로 사용자 언어를 추론하지 않는다.
+- code·command·path·identifier·frontmatter·인용문은 원문을 보존한다. 기존 문서를 수정할 때는 번역 요청이 없으면 원래 문서 언어를 유지한다. 문서 내용을 대화에서 요약할 때는 직접 인용만 원문으로 두고 나머지는 결정된 응답 언어로 설명한다.
+- 이 규칙은 대화 응답에만 적용한다. `## 작업 사본`같은 vault canonical schema heading과 terminal output은 번역하지 않는다. skill의 user-facing question·label·example은 고정 문자열이 아니라 semantic instruction이며, 결정된 응답 언어로 표현한다.

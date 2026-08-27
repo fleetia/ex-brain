@@ -169,6 +169,8 @@ cmp "$case_root/state-before-v2-uninstaller" "$state_file" >/dev/null ||
 assert_eq "$(cat "$vault/CLAUDE.md")" "user-owned CLAUDE content"
 assert_eq "$(cat "$vault/user-note.md")" "keep me"
 [ -f "$vault/AGENTS.md" ] || fail "누락된 template 파일이 병합되지 않았습니다"
+assert_file_contains "$vault/AGENTS.md" "이 규칙은 대화 응답에만 적용한다."
+assert_file_contains "$ROOT/vault-template/CLAUDE.md" "가장 최근의 의미 있는 사용자 발화 언어"
 [ -d "$vault/00.memory/tasks/cancelled" ] || fail "누락된 template 폴더가 병합되지 않았습니다"
 for name in "${SKILLS[@]}"; do
   assert_eq "$(readlink "$user_home/.claude/skills/$name")" "$user_home/.ai-session-kit/runtime/skills/$name"
@@ -229,8 +231,19 @@ printf '%s' "$session_output" | jq -e '.hookSpecificOutput.hookEventName == "Ses
 printf '%s' "$session_output" | jq -e '
   .hookSpecificOutput.additionalContext |
   contains("session-end skill의 제안 mode를 대화당 한 번만 적용") and
-  contains("제안에 동의한 뒤에만 기록")
-' >/dev/null || fail "SessionStart가 동의 기반 session-end 제안 규칙을 주입하지 않았습니다"
+  contains("제안에 동의한 뒤에만 기록") and
+  contains("상위 지침이 응답 언어를 정하지 않은 경우") and
+  contains("사용자가 명시적으로 지정한 언어") and
+  contains("가장 최근의 의미 있는 사용자 발화 언어") and
+  contains("최신 발화가 짧거나 code 중심이거나 언어가 혼합되어 모호하면") and
+  contains("repo·skill·hook·error message의 언어로 사용자 언어를 추론하지") and
+  contains("code·command·path·identifier·frontmatter·인용문은 원문을 보존") and
+  contains("기존 문서를 수정할 때는 번역 요청이 없으면 원래 문서 언어를 유지") and
+  contains("문서 내용을 대화에서 요약할 때는 직접 인용만 원문으로 두고 나머지는 결정된 응답 언어로 설명") and
+  contains("이 규칙은 대화 응답에만 적용") and
+  contains("vault canonical schema heading과 terminal output은 번역하지") and
+  contains("user-facing question·label·example은 고정 문자열이 아니라 semantic instruction")
+' >/dev/null || fail "SessionStart가 동의 기반 session-end 또는 대화 응답 언어 규칙을 주입하지 않았습니다"
 
 failed_move_vault="$case_root/Failed Move Vault"
 cp "$user_home/.codex/hooks.json" "$case_root/codex-hooks-before-failed-move.json"

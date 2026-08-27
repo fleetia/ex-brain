@@ -426,6 +426,10 @@ try {
         Assert-True ($stateLines[$skillIndex + 6] -eq $skills[$skillIndex]) 'install-state skill manifest 순서가 다릅니다.'
     }
     Assert-True ([System.IO.File]::ReadAllText((Join-Path $runtime '.ai-session-kit-runtime')).Trim() -eq 'ai-session-kit-runtime-v2') 'runtime marker가 다릅니다.'
+    $agentsEntry = [System.IO.File]::ReadAllText((Join-Path $vaultA 'AGENTS.md'))
+    $claudeEntry = [System.IO.File]::ReadAllText((Join-Path $vaultA 'CLAUDE.md'))
+    Assert-True ($agentsEntry.Contains('이 규칙은 대화 응답에만 적용한다.')) 'AGENTS.md에 대화 응답 언어 경계가 없습니다.'
+    Assert-True ($claudeEntry.Contains('가장 최근의 의미 있는 사용자 발화 언어')) 'CLAUDE.md에 대화 응답 언어 우선순위가 없습니다.'
 
     $oldUninstallScript = Join-Path $testRoot 'uninstall-v2-fixture.ps1'
     $oldUninstallContent = @'
@@ -492,6 +496,17 @@ if ($marker -ne 'ai-session-kit-state-v1' -and $marker -ne 'ai-session-kit-state
     Assert-True (-not $context.Contains('archived.md')) 'SessionStart가 archived 문서를 주입했습니다.'
     Assert-True ($context.Contains('session-end skill의 제안 mode를 대화당 한 번만 적용')) 'SessionStart가 session-end 1회 제안 규칙을 주입하지 않았습니다.'
     Assert-True ($context.Contains('제안에 동의한 뒤에만 기록')) 'SessionStart가 session-end 동의 경계를 주입하지 않았습니다.'
+    Assert-True ($context.Contains('상위 지침이 응답 언어를 정하지 않은 경우')) 'SessionStart가 상위 응답 언어 지침의 우선순위를 보존하지 않았습니다.'
+    Assert-True ($context.Contains('사용자가 명시적으로 지정한 언어')) 'SessionStart가 명시적 응답 언어 우선 규칙을 주입하지 않았습니다.'
+    Assert-True ($context.Contains('가장 최근의 의미 있는 사용자 발화 언어')) 'SessionStart가 최신 사용자 발화 규칙을 주입하지 않았습니다.'
+    Assert-True ($context.Contains('최신 발화가 짧거나 code 중심이거나 언어가 혼합되어 모호하면')) 'SessionStart가 기존 대화 언어 유지 규칙을 주입하지 않았습니다.'
+    Assert-True ($context.Contains('repo·skill·hook·error message의 언어로 사용자 언어를 추론하지')) 'SessionStart가 언어 추론 금지 규칙을 주입하지 않았습니다.'
+    Assert-True ($context.Contains('code·command·path·identifier·frontmatter·인용문은 원문을 보존')) 'SessionStart가 technical text 보존 규칙을 주입하지 않았습니다.'
+    Assert-True ($context.Contains('기존 문서를 수정할 때는 번역 요청이 없으면 원래 문서 언어를 유지')) 'SessionStart가 기존 문서 편집 언어 유지 규칙을 주입하지 않았습니다.'
+    Assert-True ($context.Contains('문서 내용을 대화에서 요약할 때는 직접 인용만 원문으로 두고 나머지는 결정된 응답 언어로 설명')) 'SessionStart가 기존 문서 요약의 응답 언어 규칙을 주입하지 않았습니다.'
+    Assert-True ($context.Contains('이 규칙은 대화 응답에만 적용')) 'SessionStart가 응답 언어 적용 범위를 주입하지 않았습니다.'
+    Assert-True ($context.Contains('vault canonical schema heading과 terminal output은 번역하지')) 'SessionStart가 canonical output 번역 금지 규칙을 주입하지 않았습니다.'
+    Assert-True ($context.Contains('user-facing question·label·example은 고정 문자열이 아니라 semantic instruction')) 'SessionStart가 user-facing 문구의 semantic 규칙을 주입하지 않았습니다.'
 
     $sessionFromWindows = Invoke-WindowsHookCommand -Command ([string]$codexSessionHandlers[0].commandWindows) -InputText '{}'
     Assert-True ($sessionFromWindows.Status -eq 0) ('Codex commandWindows 실패: ' + $sessionFromWindows.Stderr)
