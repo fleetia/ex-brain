@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/icon-dark.svg">
+  <img src=".github/assets/icon.svg" alt="AI Session Kit" width="64" height="64">
+</picture>
+
 # AI 개발·세션 기록 킷
 
 Claude Code나 Codex로 앱과 웹사이트를 만들고 고치는 일을 여러 대화에 걸쳐 이어가기 위한 `ai-session-kit`의 원본 저장소입니다. 한 번 질문하고 끝나는 대화에는 필요하지 않습니다. 작업이 길어지면 AI가 이전 결정과 남은 일을 놓치거나, 방향만 제안한 상태를 실제 구현·검증 완료처럼 설명하기 쉬워집니다.
